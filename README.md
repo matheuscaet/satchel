@@ -4,6 +4,9 @@ Satchel is an open-source, cross-platform desktop API client, built on [Tauri](h
 
 Satchel is a standalone tool first: build collections, folders, and requests directly in the app — no import required. Postman collections are a door in, not a dependency: drop in a [Collection Format v2.1](https://learning.postman.com/collection-format/getting-started/overview/) export and Satchel rebuilds it — folders, requests, headers, bodies, auth, and `{{variables}}` — as native Satchel collections you keep editing afterward. You can also paste a `curl` command (e.g. from a browser's "Copy as cURL") and Satchel parses it into a new request. See `src/postman.ts` and `src/curl.ts` for those two importers.
 
+<img width="2384" height="1664" alt="image" src="https://github.com/user-attachments/assets/ce2f4a72-014f-43df-95ca-fe66fdb035aa" />
+
+
 ## Features
 
 - Collections, folders, and requests — create and edit them directly, or import from Postman
