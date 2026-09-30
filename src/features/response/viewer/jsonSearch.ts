@@ -1,4 +1,4 @@
-import { childId, resolvePathQuery, type JsonPath } from "./jsonPath";
+import { formatPath, resolvePathQuery, type JsonPath } from "./jsonPath";
 import { isContainer } from "./treeModel";
 
 export type SearchScope = "all" | "keys" | "values";
@@ -37,10 +37,7 @@ export function searchTree(root: unknown, query: string, scope: SearchScope, cap
   const q = query.trim();
   if (!q) return { matches: [], byPath: false, capped: false };
   const resolved = resolvePathQuery(root, q);
-  if (resolved) {
-    const id = resolved.reduce<string>((acc, seg) => childId(acc, seg), "");
-    return { matches: [{ id, path: resolved }], byPath: true, capped: false };
-  }
+  if (resolved) return { matches: [{ id: formatPath(resolved), path: resolved }], byPath: true, capped: false };
 
   const needle = q.toLowerCase();
   const keys = scope !== "values";
@@ -48,8 +45,8 @@ export function searchTree(root: unknown, query: string, scope: SearchScope, cap
   const matches: TreeMatch[] = [];
   let capped = false;
 
-  const path: JsonPath = []; // mutable walk stack; copied only on a hit
-  const visit = (value: unknown, id: string, key: string | null): boolean => {
+  const path: JsonPath = []; // mutable walk stack; copied (and its id formatted) only on a hit
+  const visit = (value: unknown, key: string | null): boolean => {
     const hit =
       (keys && key !== null && key.toLowerCase().includes(needle)) ||
       (values && !isContainer(value) && primitiveText(value).toLowerCase().includes(needle));
@@ -58,26 +55,26 @@ export function searchTree(root: unknown, query: string, scope: SearchScope, cap
         capped = true;
         return false;
       }
-      matches.push({ id, path: path.slice() });
+      matches.push({ id: formatPath(path), path: path.slice() });
     }
     if (Array.isArray(value)) {
       for (let i = 0; i < value.length; i++) {
         path.push(i);
-        const go = visit(value[i], childId(id, i), null);
+        const go = visit(value[i], null);
         path.pop();
         if (!go) return false;
       }
     } else if (isContainer(value)) {
       for (const k of Object.keys(value)) {
         path.push(k);
-        const go = visit((value as Record<string, unknown>)[k], childId(id, k), k);
+        const go = visit((value as Record<string, unknown>)[k], k);
         path.pop();
         if (!go) return false;
       }
     }
     return true;
   };
-  visit(root, "", null);
+  visit(root, null);
   return { matches, byPath: false, capped };
 }
 

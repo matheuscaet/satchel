@@ -80,7 +80,7 @@ function ResponseBody({ requestId, entry, tab }: { requestId: string; entry: Res
   if (tab === "headers") {
     return <Scroll>{r.headers.length ? <HeadersTable headers={r.headers} /> : <ResponseNote>The response has no headers.</ResponseNote>}</Scroll>;
   }
-  if (r.bodyText === "") {
+  if (r.rawBodyText === "") {
     return (
       <Scroll>
         <ResponseNote>
@@ -94,7 +94,7 @@ function ResponseBody({ requestId, entry, tab }: { requestId: string; entry: Res
     const loc = ws.findRequest(requestId);
     if (loc) void openResponsePopout(snapshotOf(loc.request, r));
   };
-  return <ResponseViewer variant="pane" bodyText={r.bodyText} rawText={r.rawBodyText} isJson={r.isJson} onOpenWindow={openWindow} />;
+  return <ResponseViewer variant="pane" rawText={r.rawBodyText} isJson={r.isJson} onOpenWindow={openWindow} />;
 }
 
 function Scroll({ children }: { children: ReactNode }) {

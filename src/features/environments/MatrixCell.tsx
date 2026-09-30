@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cn } from "@/lib/utils";
+import { displayValue } from "./matrixModel";
 
 export const MATRIX_CELL_CLASS = "h-8 border-r border-b border-line px-2.5 text-left align-middle whitespace-nowrap";
 /** Sticky first column: opaque so scrolled cells never show through it. */
@@ -16,14 +17,27 @@ interface MatrixCellProps {
   /** the active environment defines it: this is the value that gets sent */
   winning: boolean;
   ring: "hit" | "fresh" | null;
+  /** masked (fixed dots) until focused */
+  secret: boolean;
   onCommit: (draft: string) => void;
 }
 
-/** One editable value: a bare mono input, committed on blur / Enter, reverted on Escape. */
-export function MatrixCell({ name, columnKey, columnLabel, value, width, active, winning, ring, onCommit }: MatrixCellProps) {
+/**
+ * One editable value: a bare mono input, committed on blur / Enter, reverted on Escape.
+ * A secret value shows as a fixed mask until the cell is focused.
+ */
+export function MatrixCell({ name, columnKey, columnLabel, value, width, active, winning, ring, secret, onCommit }: MatrixCellProps) {
   const [draft, setDraft] = useState(value ?? "");
+  const [editing, setEditing] = useState(false);
   const focused = useRef(false);
   const skipCommit = useRef(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const masked = displayValue(draft, secret, editing) !== draft;
+
+  // Revealing swaps the input's text, which drops any selection: select the real value instead.
+  useLayoutEffect(() => {
+    if (editing && secret && document.activeElement === inputRef.current) inputRef.current?.select();
+  }, [editing, secret]);
 
   // Follow outside changes (undo, another cell, a different file) unless the user is typing here.
   useEffect(() => {
@@ -40,12 +54,14 @@ export function MatrixCell({ name, columnKey, columnLabel, value, width, active,
       )}
     >
       <input
+        ref={inputRef}
         data-cell={`${columnKey}|${name}`}
-        value={draft}
+        value={displayValue(draft, secret, editing)}
+        readOnly={masked}
         placeholder="—"
         autoComplete="off"
         spellCheck={false}
-        aria-label={`${name} in ${columnLabel}`}
+        aria-label={`${name} in ${columnLabel}${secret ? " (secret)" : ""}`}
         style={{ width: `${width}ch` }}
         className={cn(
           "block h-[31px] min-w-[8ch] bg-transparent font-mono text-[12.5px] leading-[31px] text-fg2 outline-none placeholder:text-fg3 placeholder:opacity-50 focus:text-fg",
@@ -53,10 +69,12 @@ export function MatrixCell({ name, columnKey, columnLabel, value, width, active,
         )}
         onFocus={() => {
           focused.current = true;
+          setEditing(true);
         }}
         onChange={(e) => setDraft(e.target.value)}
         onBlur={() => {
           focused.current = false;
+          setEditing(false);
           if (skipCommit.current) {
             skipCommit.current = false;
             setDraft(value ?? "");

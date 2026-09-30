@@ -27,7 +27,7 @@ See the [README](README.md#getting-started) for prerequisites and how to run the
 
 ## What needs a test, and what doesn't
 
-`src/postman.ts`, `src/curl.ts`, and `src/workspace.ts` all parse untrusted input - a Postman export someone else made, a curl command copied from a browser, a workspace file someone hand-edited. If you touch one of these, add a test case in the matching `*.test.ts` file, especially for a malformed-input path. UI-only changes (layout, styling, a new button) don't need one.
+`src/postman.ts`, `src/curl.ts`, `src/workspace.ts`, and `src/folderFormat/` all parse untrusted input - a Postman export someone else made, a curl command copied from a browser, a workspace file someone hand-edited, a workspace folder a teammate pushed (possibly mid-merge). If you touch one of these, add a test case in the matching `*.test.ts` file, especially for a malformed-input path. UI-only changes (layout, styling, a new button) don't need one.
 
 ## Reporting bugs / requesting features
 

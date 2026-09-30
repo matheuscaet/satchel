@@ -1,6 +1,16 @@
 import { describe, expect, it } from "vitest";
 import type { Workspace } from "@/types";
-import { columnWidth, matrixColumns, matrixVariableNames, valueIn, VARIABLE_NAME } from "./matrixModel";
+import {
+  columnWidth,
+  displayValue,
+  hasAnyValue,
+  matrixColumns,
+  matrixVariableNames,
+  SECRET_MASK,
+  secretVariableNames,
+  valueIn,
+  VARIABLE_NAME,
+} from "./matrixModel";
 
 const kv = (key: string, value: string) => ({ key, value, enabled: true });
 
@@ -41,5 +51,36 @@ describe("environment matrix model", () => {
     expect(VARIABLE_NAME.test("dotnetapi-local")).toBe(true);
     expect(VARIABLE_NAME.test("api.key_2")).toBe(true);
     expect(VARIABLE_NAME.test("has space")).toBe(false);
+  });
+
+  it("finds secret names across every column", () => {
+    const secretWs: Workspace = {
+      ...ws,
+      globals: [{ ...kv("apiKey", ""), secret: true }],
+      environments: [{ id: "e1", name: "Local", variables: [{ ...kv("token", "dev"), secret: true }, kv("baseUrl", "x")] }],
+    };
+    expect([...secretVariableNames(matrixColumns(secretWs))].sort()).toEqual(["apiKey", "token"]);
+    expect(secretVariableNames(matrixColumns(ws)).size).toBe(0);
+  });
+
+  it("knows whether a variable has a value anywhere", () => {
+    const columns = matrixColumns({ ...ws, globals: [kv("empty", ""), kv("timeout", "30")] });
+    expect(hasAnyValue(columns, "token")).toBe(true);
+    expect(hasAnyValue(columns, "empty")).toBe(false);
+    expect(hasAnyValue(columns, "missing")).toBe(false);
+  });
+
+  it("masks secret values with a fixed length unless revealed", () => {
+    expect(displayValue("hunter2", true, false)).toBe(SECRET_MASK);
+    expect(displayValue("a".repeat(60), true, false)).toBe(SECRET_MASK);
+    expect(displayValue("hunter2", true, true)).toBe("hunter2");
+    expect(displayValue("hunter2", false, false)).toBe("hunter2");
+    expect(displayValue("", true, false)).toBe("");
+  });
+
+  it("sizes secret values as the mask, not their length", () => {
+    const local = { ...matrixColumns(ws)[2], variables: [{ ...kv("token", "t".repeat(80)), secret: true }] };
+    expect(columnWidth(local, ["token"])).toBe(34);
+    expect(columnWidth(local, ["token"], new Set(["token"]))).toBe(10);
   });
 });

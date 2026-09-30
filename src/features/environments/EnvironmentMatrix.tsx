@@ -2,19 +2,24 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { EnvDot } from "@/components/common/EnvDot";
 import { useWorkspace } from "@/state/workspace";
-import { useSession } from "@/state/session";
+import { useSessionCore } from "@/state/session";
 import { useUi } from "@/state/ui";
 import { useAppActions } from "@/state/actions";
 import { cn } from "@/lib/utils";
 import { EnvironmentColumnMenu } from "./EnvironmentColumnMenu";
 import { MATRIX_CELL_CLASS, MATRIX_STICKY_CLASS, MatrixCell } from "./MatrixCell";
 import { LinkButton, SecondaryButton } from "@/components/common/Modal";
+import { SecretTag } from "./SecretTag";
+import { SecretToggle } from "./SecretToggle";
+import { ShareSecretDialog } from "./ShareSecretDialog";
 import {
   columnWidth,
   envColumnKey,
   GLOBALS_KEY,
+  hasAnyValue,
   matrixColumns,
   matrixVariableNames,
+  secretVariableNames,
   valueIn,
   VARIABLE_NAME,
   type MatrixColumn,
@@ -29,7 +34,7 @@ const HEAD_CELL_CLASS = "sticky top-0 z-[2] h-11 border-t bg-bg0 font-sans text-
 /** The "Environments" tab: every variable × globals / collections / environments, edited in place. */
 export function EnvironmentMatrix() {
   const ws = useWorkspace();
-  const session = useSession();
+  const session = useSessionCore();
   const ui = useUi();
   const actions = useAppActions();
   const { workspace } = ws;
@@ -40,17 +45,26 @@ export function EnvironmentMatrix() {
   const [highlight, setHighlight] = useState<Highlight | null>(null);
   const [focusRequest, setFocusRequest] = useState<FocusRequest | null>(null);
   const [newName, setNewName] = useState("");
+  /** Rows not defined anywhere yet that were marked secret: the flag is applied with their first value. */
+  const [pendingSecret, setPendingSecret] = useState<string[]>([]);
+  const [confirmShare, setConfirmShare] = useState<string | null>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
   const tableRef = useRef<HTMLTableElement>(null);
 
   const columns = useMemo(() => matrixColumns(workspace), [workspace]);
   const names = useMemo(() => matrixVariableNames(workspace, extra), [workspace, extra]);
-  const widths = useMemo(() => new Map(columns.map((c) => [c.key, columnWidth(c, names)])), [columns, names]);
+  const secrets = useMemo(() => {
+    const set = secretVariableNames(columns);
+    for (const n of pendingSecret) set.add(n);
+    return set;
+  }, [columns, pendingSecret]);
+  const widths = useMemo(() => new Map(columns.map((c) => [c.key, columnWidth(c, names, secrets)])), [columns, names, secrets]);
 
-  // Extra rows only live until something defines them.
+  // Extra rows (and their pending secret flag) only live until something defines them.
   useEffect(() => {
     const defined = new Set(matrixVariableNames(workspace));
     setExtra((x) => (x.some((n) => defined.has(n)) ? x.filter((n) => !defined.has(n)) : x));
+    setPendingSecret((x) => (x.some((n) => defined.has(n)) ? x.filter((n) => !defined.has(n)) : x));
   }, [workspace]);
 
   // "Define in Production", a just-created environment, …: highlight and focus, then consume the request.
@@ -100,12 +114,31 @@ export function EnvironmentMatrix() {
   function commit(column: MatrixColumn, name: string, draft: string) {
     if (draft === (valueIn(column, name) ?? "")) return;
     ws.setVariableIn(column.target, name, draft === "" ? null : draft);
+    if (draft !== "" && pendingSecret.includes(name)) ws.setVariableSecret(name, true);
     setHighlight(null);
     toast(
       <span>
         <span className="font-mono">{`{{${name}}}`}</span> {draft === "" ? "removed from" : "saved in"} {column.label}.
       </span>,
     );
+  }
+
+  function setSecret(name: string, secret: boolean) {
+    const defined = columns.some((c) => c.variables.some((v) => v.key === name));
+    if (defined) ws.setVariableSecret(name, secret);
+    setPendingSecret((x) => (secret && !defined ? [...x, name] : x.filter((n) => n !== name)));
+    toast(
+      <span>
+        <span className="font-mono">{`{{${name}}}`}</span>{" "}
+        {secret ? "is secret now. Its values stay on this machine." : "is shared again. Its values go in the workspace files."}
+      </span>,
+    );
+  }
+
+  function toggleSecret(name: string) {
+    if (!secrets.has(name)) setSecret(name, true);
+    else if (hasAnyValue(columns, name)) setConfirmShare(name);
+    else setSecret(name, false);
   }
 
   function addVariable(): boolean {
@@ -183,8 +216,16 @@ export function EnvironmentMatrix() {
           </thead>
           <tbody>
             {names.map((name) => (
-              <tr key={name}>
-                <td className={cn(MATRIX_CELL_CLASS, MATRIX_STICKY_CLASS)}>{name}</td>
+              <tr key={name} className="group/row">
+                <td className={cn(MATRIX_CELL_CLASS, MATRIX_STICKY_CLASS)}>
+                  <span className="flex items-center gap-2">
+                    <span>
+                      {name}
+                      {secrets.has(name) && <SecretTag />}
+                    </span>
+                    <SecretToggle name={name} secret={secrets.has(name)} onToggle={() => toggleSecret(name)} />
+                  </span>
+                </td>
                 {columns.map((column) => {
                   const value = valueIn(column, name);
                   const isActive = column.key === activeKey;
@@ -199,6 +240,7 @@ export function EnvironmentMatrix() {
                       active={isActive}
                       winning={isActive && (value ?? "") !== ""}
                       ring={ringFor(column.key, name)}
+                      secret={secrets.has(name)}
                       onCommit={(draft) => commit(column, name, draft)}
                     />
                   );
@@ -234,6 +276,13 @@ export function EnvironmentMatrix() {
           </tbody>
         </table>
       </div>
+      {confirmShare && (
+        <ShareSecretDialog
+          name={confirmShare}
+          onConfirm={() => setSecret(confirmShare, false)}
+          onClose={() => setConfirmShare(null)}
+        />
+      )}
     </div>
   );
 }

@@ -57,8 +57,31 @@ export function valueIn(column: MatrixColumn, name: string): string | undefined 
   return column.variables.find((v) => v.key === name)?.value;
 }
 
-/** Cell width in ch: fits the column's label and longest value, clamped to 10–34. */
-export function columnWidth(column: MatrixColumn, names: string[]): number {
-  const longest = Math.max(0, ...names.map((n) => (valueIn(column, n) ?? "").length + 1));
+/** What a secret value shows while it isn't being edited: a fixed length, so it doesn't leak the real one. */
+export const SECRET_MASK = "••••••••";
+
+/** Names marked secret in any column (the flag is per key, set in every scope at once). */
+export function secretVariableNames(columns: MatrixColumn[]): Set<string> {
+  const names = new Set<string>();
+  for (const c of columns) for (const v of c.variables) if (v.secret && v.key) names.add(v.key);
+  return names;
+}
+
+/** Whether any column holds a non-empty value for `name`. */
+export function hasAnyValue(columns: MatrixColumn[], name: string): boolean {
+  return columns.some((c) => (valueIn(c, name) ?? "") !== "");
+}
+
+/** The text to show for a value: masked when it's secret, not revealed, and not empty. */
+export function displayValue(value: string, secret: boolean, revealed: boolean): string {
+  return secret && !revealed && value !== "" ? SECRET_MASK : value;
+}
+
+/**
+ * Cell width in ch: fits the column's label and longest value, clamped to 10–34.
+ * Secret values count as the mask, so the column doesn't hint at their length.
+ */
+export function columnWidth(column: MatrixColumn, names: string[], secret: ReadonlySet<string> = new Set()): number {
+  const longest = Math.max(0, ...names.map((n) => displayValue(valueIn(column, n) ?? "", secret.has(n), false).length + 1));
   return Math.min(34, Math.max(10, column.label.length + 2, longest));
 }

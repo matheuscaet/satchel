@@ -9,8 +9,8 @@ import type { ResponseSnapshot } from "./snapshot";
  *
  * A response window boots as a fresh page (`/?popout=<id>`), announces itself
  * with "ready", and the main window answers with the snapshot it was opened
- * for. Later responses to the same request are broadcast as "update"; each
- * window decides whether it follows them.
+ * for. Later responses to the same request are sent as "update" to the
+ * windows showing it; each window decides whether it follows them.
  *
  * Desktop: Tauri events between webview windows. Browser (vite dev):
  * window.open + postMessage.
@@ -19,8 +19,10 @@ import type { ResponseSnapshot } from "./snapshot";
 export const POPOUT_PARAM = "popout";
 
 const EV_READY = "satchel://popout-ready";
-const EV_SNAPSHOT = "satchel://popout-snapshot";
-const EV_UPDATE = "satchel://popout-update";
+// Per window: Tauri evaluates an event's payload in every webview listening to that name,
+// whatever its target, so a shared name would ship a multi-MB body to every window.
+const evSnapshot = (id: string) => `satchel://popout-snapshot/${id}`;
+const evUpdate = (id: string) => `satchel://popout-update/${id}`;
 const MSG_READY = "satchel-popout-ready";
 const MSG_SNAPSHOT = "satchel-popout-snapshot";
 const MSG_UPDATE = "satchel-popout-update";
@@ -44,7 +46,7 @@ function installMainListeners() {
   if (isTauri()) {
     void listen<{ id: string }>(EV_READY, ({ payload }) => {
       const snapshot = snapshots.get(payload.id);
-      if (snapshot) void emitTo(payload.id, EV_SNAPSHOT, { id: payload.id, snapshot } satisfies SnapshotMessage);
+      if (snapshot) void emitTo(payload.id, evSnapshot(payload.id), { id: payload.id, snapshot } satisfies SnapshotMessage);
     });
   } else {
     window.addEventListener("message", (e) => {
@@ -87,18 +89,20 @@ export async function openResponsePopout(snapshot: ResponseSnapshot): Promise<vo
 
 /** Push a new response to any open windows following that request. */
 export function publishResponse(snapshot: ResponseSnapshot): void {
-  let any = false;
+  const following: string[] = [];
   for (const [id, s] of snapshots) {
     if (s.requestId !== snapshot.requestId) continue;
     snapshots.set(id, snapshot);
-    any = true;
+    following.push(id);
   }
-  if (!any) return;
+  if (!following.length) return;
   if (isTauri()) {
-    void emit(EV_UPDATE, snapshot);
+    for (const id of following) void emitTo(id, evUpdate(id), snapshot);
     return;
   }
-  for (const [id, w] of browserWindows) {
+  for (const id of following) {
+    const w = browserWindows.get(id);
+    if (!w) continue;
     if (w.closed) {
       browserWindows.delete(id);
       snapshots.delete(id);
@@ -123,10 +127,10 @@ export function connectPopout(
 ): () => void {
   if (isTauri()) {
     const unlisteners: Promise<() => void>[] = [
-      listen<SnapshotMessage>(EV_SNAPSHOT, ({ payload }) => {
+      listen<SnapshotMessage>(evSnapshot(id), ({ payload }) => {
         if (payload.id === id) onSnapshot(payload.snapshot);
       }),
-      listen<ResponseSnapshot>(EV_UPDATE, ({ payload }) => onUpdate(payload)),
+      listen<ResponseSnapshot>(evUpdate(id), ({ payload }) => onUpdate(payload)),
     ];
     // Listen first, then announce — otherwise the answer could arrive before we're listening.
     void Promise.all(unlisteners).then(() => emit(EV_READY, { id }));

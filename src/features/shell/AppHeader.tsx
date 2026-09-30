@@ -12,20 +12,12 @@ import { WorkspaceFileMenu } from "./WorkspaceFileMenu";
 
 /** 44px app header: brand, workspace file, search, environment, theme. */
 export function AppHeader() {
-  const ws = useWorkspace();
   const ui = useUi();
   const { theme, toggleTheme } = useTheme();
 
-  // Surface file/IO errors once, then clear them.
-  const { error, clearError } = ws;
-  useEffect(() => {
-    if (!error) return;
-    toast.error(error);
-    clearError();
-  }, [error, clearError]);
-
   return (
-    <header className="grid grid-cols-[256px_minmax(0,1fr)_auto] items-center border-b border-line bg-bg0 max-[820px]:grid-cols-[auto_minmax(0,1fr)_auto]">
+    <header className="grid grid-cols-[var(--sidebar-w,256px)_minmax(0,1fr)_auto] items-center border-b border-line bg-bg0 max-[820px]:grid-cols-[auto_minmax(0,1fr)_auto]">
+      <WorkspaceErrors />
       <div className="flex h-full items-center gap-2 border-r border-line px-3.5 font-semibold tracking-[-0.01em] max-[820px]:border-r-0">
         <IconButton
           className="min-[820px]:hidden"
@@ -61,4 +53,15 @@ export function AppHeader() {
       </div>
     </header>
   );
+}
+
+/** Surfaces file/IO errors once, then clears them. Its own component: it watches the workspace, the header doesn't. */
+function WorkspaceErrors() {
+  const { error, clearError } = useWorkspace();
+  useEffect(() => {
+    if (!error) return;
+    toast.error(error);
+    clearError();
+  }, [error, clearError]);
+  return null;
 }

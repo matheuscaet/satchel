@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { BurstResult } from "@/http/burst";
-import { CHART, chartGeometry, firstRateLimited, latencyTop, percentile, remainingScale, resultKind, summarizeBurst } from "./burstMath";
+import {
+  BAR_LIMIT,
+  CHART,
+  chartGeometry,
+  firstRateLimited,
+  latencyTop,
+  mergeBySeq,
+  percentile,
+  remainingScale,
+  resultKind,
+  summarizeBurst,
+} from "./burstMath";
 
 function res(seq: number, over: Partial<BurstResult> = {}): BurstResult {
   return {
@@ -26,6 +37,24 @@ describe("percentile", () => {
     expect(percentile(xs, 0.5)).toBe(51);
     expect(percentile(xs, 0.95)).toBe(96);
     expect(percentile([7], 0.95)).toBe(7);
+  });
+});
+
+describe("mergeBySeq", () => {
+  const seqs = (rs: BurstResult[]) => rs.map((r) => r.seq);
+  it("appends a batch that comes after everything so far", () => {
+    const sorted = [res(1), res(2)];
+    const merged = mergeBySeq(sorted, [res(4), res(3)]);
+    expect(seqs(merged)).toEqual([1, 2, 3, 4]);
+    expect(seqs(sorted)).toEqual([1, 2]);
+  });
+  it("merges a batch that overlaps the tail", () => {
+    expect(seqs(mergeBySeq([res(1), res(3), res(6)], [res(5), res(2), res(7)]))).toEqual([1, 2, 3, 5, 6, 7]);
+    expect(seqs(mergeBySeq([res(4), res(5)], [res(1)]))).toEqual([1, 4, 5]);
+  });
+  it("returns the same array for an empty batch", () => {
+    const sorted = [res(1)];
+    expect(mergeBySeq(sorted, [])).toBe(sorted);
   });
 });
 
@@ -131,6 +160,35 @@ describe("chartGeometry", () => {
   it("skips results without a remaining header in the step line", () => {
     const g = chartGeometry([res(1, { t: 1, remaining: 1, limit: 2 }), res(2, { t: 2 })], 5, 10, 434);
     expect(g.remaining?.path).toBe("M50,12 H120 V70");
+  });
+
+  it("draws a run of equal remaining values as one stretch", () => {
+    const g = chartGeometry(
+      [res(1, { t: 1, remaining: 0, limit: 2 }), res(2, { t: 2, remaining: 0, limit: 2 }), res(3, { t: 3, remaining: 0, limit: 2 })],
+      5,
+      10,
+      434,
+    );
+    expect(g.remaining?.path).toBe("M50,12 H120 V128 H260");
+  });
+
+  it("keeps one bar per result up to the limit", () => {
+    const rs = Array.from({ length: BAR_LIMIT }, (_, i) => res(i + 1, { t: (i / BAR_LIMIT) * 5 }));
+    expect(chartGeometry(rs, 5, BAR_LIMIT, 434).bars).toHaveLength(BAR_LIMIT);
+  });
+
+  it("pools a huge run into the tallest bar per pixel column and kind", () => {
+    const n = 12000;
+    const rs = Array.from({ length: n }, (_, i) =>
+      res(i + 1, { t: (i / n) * 60, ms: i === 6000 ? 140 : 40, status: i % 100 === 0 ? 429 : 200 }),
+    );
+    const g = chartGeometry(rs, 60, n, 434);
+    // 350px plot: at most one bar per column per kind
+    expect(g.bars.length).toBeLessThanOrEqual(350 * 2);
+    expect(g.bars.length).toBeGreaterThan(350);
+    const tallest = g.bars.reduce((a, b) => (b.h > a.h ? b : a));
+    expect(tallest.seq).toBe(6001);
+    expect(g.bars.filter((b) => b.kind === "limited")).toHaveLength(120);
   });
 
   it("marks the first 429 and anchors its label at the end near the right edge", () => {

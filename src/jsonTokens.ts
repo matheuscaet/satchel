@@ -21,6 +21,7 @@ export const JSON_TOKEN_CLASS: Record<JsonTokenKind, string | undefined> = {
 // (VSCode-style: a string immediately followed by `:` reads as a key)
 // rather than requiring the whole document to parse.
 const TOKEN_PATTERN = /"(?:\\.|[^"\\])*"|-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?|\btrue\b|\bfalse\b|\bnull\b|[{}[\]:,]/g;
+const FOLLOWED_BY_COLON = /\s*:/y;
 
 export function tokenizeJsonLike(text: string): JsonRun[] {
   const runs: JsonRun[] = [];
@@ -33,8 +34,8 @@ export function tokenizeJsonLike(text: string): JsonRun[] {
     const token = match[0];
     let kind: JsonTokenKind;
     if (token[0] === '"') {
-      const rest = text.slice(index + token.length);
-      kind = /^\s*:/.test(rest) ? "key" : "string";
+      FOLLOWED_BY_COLON.lastIndex = index + token.length;
+      kind = FOLLOWED_BY_COLON.test(text) ? "key" : "string";
     } else if (token === "true" || token === "false" || token === "null") {
       kind = "literal";
     } else if (/^[{}[\]:,]$/.test(token)) {

@@ -75,3 +75,12 @@ describe("buildBody", () => {
     expect(buildBody(req, vars)).toBe("user=alice");
   });
 });
+
+describe("basic auth encoding", () => {
+  it("encodes non-Latin-1 credentials as UTF-8 instead of throwing", () => {
+    const req = baseRequest({ auth: { type: "basic", username: "josé", password: "señha✓" } });
+    const header = buildHeaders(req, vars).get("Authorization")!;
+    const decoded = new TextDecoder().decode(Uint8Array.from(atob(header.slice(6)), (c) => c.charCodeAt(0)));
+    expect(decoded).toBe("josé:señha✓");
+  });
+});

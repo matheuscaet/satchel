@@ -1,11 +1,14 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef, type ComponentProps } from "react";
 import { toast } from "sonner";
 import type { HttpMethod, SatchelRequest } from "@/types";
 import { useWorkspace } from "@/state/workspace";
-import { useSession, unresolvedVariables } from "@/state/session";
-import { isResolved } from "@/variables";
-import { normalizeRequest, paramsFromUrl, pathParamNames } from "@/url";
-import { parseCurl } from "@/curl";
+import { useSessionCore, useSessionRuns, unresolvedVariables } from "@/state/session";
+import { isResolved, type VariableContext } from "@/variables";
+import { paramsFromUrl, pathParamNames } from "@/url";
+import { loadCurlParser, loadedCurlParser, looksLikeCurl } from "@/curlDetect";
+import type { ParsedCurl } from "@/curl";
+import { applyParsedCurl, describeParsedCurl, tabForParsedCurl } from "@/features/curl/summary";
+import { useCopyAsCurl } from "@/features/curl/useCopyAsCurl";
 import { VariableHoverLayer } from "@/features/variables/VariableHover";
 import { ResponsePane } from "@/features/response/ResponsePane";
 import { UrlBar } from "./UrlBar";
@@ -34,12 +37,20 @@ function focusEnd(el: HTMLInputElement | null | undefined) {
 
 export function RequestView({ requestId }: { requestId: string }) {
   const ws = useWorkspace();
-  const session = useSession();
+  const session = useSessionCore();
+  const copyAsCurl = useCopyAsCurl();
   const viewRef = useRef<HTMLDivElement>(null);
   const urlRef = useRef<HTMLInputElement>(null);
   const location = ws.findRequest(requestId);
   const request = location?.request;
-  const context = ws.variableContext(requestId);
+  // Same as ws.variableContext(requestId), but kept while typing: the collection object changes with
+  // every edit to any of its requests, and only its name and variables matter for resolving.
+  const collection = location?.collection;
+  const { activeEnvironment, workspace } = ws;
+  const context = useMemo<VariableContext>(
+    () => ({ environment: activeEnvironment, collection, globals: workspace.globals }),
+    [activeEnvironment, collection?.id, collection?.name, collection?.variables, workspace.globals],
+  );
 
   const { updateRequest } = ws;
   const update = useCallback((updater: (r: SatchelRequest) => SatchelRequest) => updateRequest(requestId, updater), [updateRequest, requestId]);
@@ -67,17 +78,20 @@ export function RequestView({ requestId }: { requestId: string }) {
     return () => clearTimeout(t);
   }, [session.sweepKey]);
 
+  const { setRequestTab } = session;
   const focusPathParam = useCallback(
     (name: string) => {
-      session.setRequestTab(requestId, "params");
+      setRequestTab(requestId, "params");
       setTimeout(() => focusEnd(viewRef.current?.querySelector<HTMLInputElement>(`[data-path-input="${CSS.escape(name)}"]`)), 30);
     },
-    [session, requestId],
+    [setRequestTab, requestId],
   );
+
+  // The response side depends only on the id: the same element lets React skip it while the request is edited.
+  const responsePane = useMemo(() => <ResponsePane requestId={requestId} />, [requestId]);
 
   if (!request) return null;
 
-  const sending = Boolean(session.sending[requestId]);
   const blocker = session.blocker?.requestId === requestId ? session.blocker : null;
   const env = ws.activeEnvironment;
 
@@ -99,46 +113,59 @@ export function RequestView({ requestId }: { requestId: string }) {
 
   const setMethod = (method: HttpMethod) => update((r) => ({ ...r, method }));
 
-  // Pasting a curl command into the URL replaces this request's method, URL, headers, body and auth.
+  const applyCurl = (parsed: ParsedCurl) => {
+    update((r) => applyParsedCurl(r, parsed));
+    session.setRequestTab(requestId, tabForParsedCurl(parsed));
+    toast(`Pasted cURL: ${describeParsedCurl(parsed)}`, parsed.warnings.length ? { description: parsed.warnings.join(" ") } : undefined);
+  };
+
+  // Pasting a curl command into the URL replaces this request's method, URL, params, headers, auth and
+  // body in one update (one undo step, one save), then shows the tab with the most of what came in.
   const pasteText = (text: string): boolean => {
-    if (!/^\s*curl\b/i.test(text)) return false;
+    if (!looksLikeCurl(text)) return false;
+    const curl = loadedCurlParser();
+    if (!curl) {
+      // The parser is prefetched when the app goes idle; a paste before that takes the text now and
+      // parses it once the parser loads. If it doesn't parse, the text goes where it was pasted.
+      const input = urlRef.current;
+      const [from, to] = [input?.selectionStart ?? request.url.length, input?.selectionEnd ?? request.url.length];
+      const url = request.url;
+      void loadCurlParser().then(({ parseCurl, CurlParseError }) => {
+        try {
+          applyCurl(parseCurl(text));
+        } catch (err) {
+          toast.error(err instanceof CurlParseError ? err.message : "Couldn't read that curl command.");
+          setUrl(url.slice(0, from) + text + url.slice(to));
+        }
+      });
+      return true;
+    }
     let parsed;
     try {
-      parsed = parseCurl(text);
-    } catch {
-      return false; // looked like curl but didn't parse: let the raw text land in the field
+      parsed = curl.parseCurl(text);
+    } catch (err) {
+      // Looked like curl but didn't parse: say why, and let the raw text land in the field.
+      toast.error(err instanceof curl.CurlParseError ? err.message : "Couldn't read that curl command.");
+      return false;
     }
-    update((r) =>
-      normalizeRequest({
-        ...r,
-        method: parsed.method,
-        url: parsed.url,
-        params: paramsFromUrl(parsed.url, []),
-        pathVariables: {},
-        headers: parsed.headers,
-        body: parsed.body,
-        auth: parsed.auth,
-      }),
-    );
-    const parts = [parsed.method, `${parsed.headers.length} header${parsed.headers.length === 1 ? "" : "s"}`];
-    if (parsed.body.mode !== "none") parts.push(parsed.body.mode === "raw" ? "JSON body" : "form body");
-    toast(`Parsed cURL: ${parts.join(", ")}.`);
+    applyCurl(parsed);
     return true;
   };
 
   return (
     <div ref={viewRef} className="grid min-h-0 min-w-0 grid-cols-[minmax(0,1fr)] grid-rows-[auto_minmax(0,1fr)]">
       <div className="border-b border-line px-3 pt-2.5 pb-2">
-        <UrlBar
+        <SendingUrlBar
+          requestId={requestId}
           method={request.method}
           url={request.url}
           context={context}
-          sending={sending}
           onMethodChange={setMethod}
           onUrlChange={setUrl}
           onSend={() => send()}
           onCancel={cancel}
           onPasteText={pasteText}
+          onCopyCurl={(resolve) => copyAsCurl(requestId, { resolve })}
           inputRef={urlRef}
         />
         <ResolvedUrl url={request.url} pathVariables={request.pathVariables} context={context} />
@@ -153,9 +180,15 @@ export function RequestView({ requestId }: { requestId: string }) {
       </div>
       <SplitView
         left={<RequestPane request={request} context={context} update={update} />}
-        right={<ResponsePane requestId={requestId} />}
+        right={responsePane}
       />
       <VariableHoverLayer rootRef={viewRef} requestId={requestId} onEditPathParam={focusPathParam} />
     </div>
   );
+}
+
+/** The URL bar with the request's in-flight state, read here so a response arriving doesn't re-render the whole view. */
+function SendingUrlBar({ requestId, ...props }: Omit<ComponentProps<typeof UrlBar>, "sending"> & { requestId: string }) {
+  const sending = Boolean(useSessionRuns().sending[requestId]);
+  return <UrlBar {...props} sending={sending} />;
 }

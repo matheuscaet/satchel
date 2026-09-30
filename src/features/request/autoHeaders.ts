@@ -1,18 +1,12 @@
 import type { KeyValue, SatchelRequest } from "@/types";
 import { resolveVariables } from "@/collectionTree";
 import { methodSendsBody } from "@/requestBuilder";
+import { base64Utf8 } from "@/lib/base64";
 
 export interface AutoRow {
   key: string;
   /** Display value; may contain {{variables}}, which get highlighted */
   value: string;
-}
-
-function base64Utf8(text: string): string {
-  const bytes = new TextEncoder().encode(text);
-  let binary = "";
-  for (const b of bytes) binary += String.fromCharCode(b);
-  return btoa(binary);
 }
 
 /**

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 import { firstRequestId, useWorkspace } from "@/state/workspace";
-import { useSession } from "@/state/session";
+import { useSessionCore } from "@/state/session";
 import { useUi } from "@/state/ui";
 import type { FolderNode } from "@/types";
 import {
@@ -36,7 +36,7 @@ export function PostmanImportDialog() {
 
 function PostmanImport({ files, onClose }: { files: File[]; onClose: () => void }) {
   const ws = useWorkspace();
-  const session = useSession();
+  const session = useSessionCore();
   const ui = useUi();
   const collections = ws.workspace.collections;
 

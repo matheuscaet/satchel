@@ -1,5 +1,5 @@
 import { useId, useState } from "react";
-import { useSession } from "@/state/session";
+import { useSessionCore, useSessionRuns } from "@/state/session";
 import { useWorkspace } from "@/state/workspace";
 import { Checkmark } from "@/components/common/Checkmark";
 import { cn } from "@/lib/utils";
@@ -50,9 +50,9 @@ function NumField({ label, suffix, value, min, max, disabled, onChange }: NumFie
 
 /** The request pane's "Rate Limit" tab: configure and start a burst. */
 export function RateLimitTab({ requestId }: { requestId: string }) {
-  const { burstConfig: c, setBurstConfig, bursts, startBurstRun, stopBurstRun } = useSession();
+  const { burstConfig: c, setBurstConfig, startBurstRun, stopBurstRun } = useSessionCore();
+  const running = !!useSessionRuns().bursts[requestId]?.running;
   const { activeEnvironment } = useWorkspace();
-  const running = !!bursts[requestId]?.running;
   const total = c.rps * c.seconds;
 
   return (

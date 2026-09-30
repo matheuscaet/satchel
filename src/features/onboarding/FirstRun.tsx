@@ -1,11 +1,13 @@
 import type { ReactNode } from "react";
-import { Download, Plus, SquareTerminal } from "lucide-react";
+import { Download, FolderGit2, Plus, SquareTerminal } from "lucide-react";
 import { toast } from "sonner";
 import { Kbd, MOD } from "@/components/common/Kbd";
 import { BagMark } from "@/features/shell/BagMark";
 import { useWorkspace } from "@/state/workspace";
 import { useUi } from "@/state/ui";
 import { useAppActions } from "@/state/actions";
+import { folderName } from "@/state/sources";
+import { useWorkspaceActions } from "@/features/workspace/useWorkspaceActions";
 
 interface DoorProps {
   icon: ReactNode;
@@ -35,7 +37,6 @@ function Door({ icon, title, hint, kbd, onClick }: DoorProps) {
 
 /** Onboarding shown when the workspace is empty (or forced from the palette). */
 export function FirstRun() {
-  const ws = useWorkspace();
   const ui = useUi();
   const actions = useAppActions();
 
@@ -76,39 +77,66 @@ export function FirstRun() {
           onClick={leave(() => actions.newRequest())}
         />
 
-        <div className="mt-5 rounded-lg border border-dashed border-line2 bg-bg0 p-3.5">
-          <div className="mb-1 font-medium">Where your workspace lives</div>
-          {ws.filePath ? (
-            <div className="text-[12.5px] leading-normal text-fg3">
-              Everything goes into <span className="font-mono text-fg2">{ws.filePath}</span>, one plain{" "}
-              <span className="font-mono">.json</span> file that you version and own.
-            </div>
-          ) : (
-            <>
-              <div className="mb-2.5 text-[12.5px] leading-normal text-fg3">
-                Everything goes into one plain <span className="font-mono">.json</span> file that you choose, version, and own. Until you
-                pick one, it stays in this app's cache.
-              </div>
-              <div className="flex items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => void ws.saveFile()}
-                  className="h-8 cursor-pointer rounded-md border border-line2 px-3.5 font-medium whitespace-nowrap text-fg2 hover:bg-bg2 hover:text-fg"
-                >
-                  Choose file…
-                </button>
-                <button
-                  type="button"
-                  onClick={() => toast("OK. Your work stays in the app cache until you choose a file.")}
-                  className="cursor-pointer text-fg2 underline decoration-line2 underline-offset-[3px] hover:text-fg hover:decoration-current"
-                >
-                  Decide later
-                </button>
-              </div>
-            </>
-          )}
+        <WorkspaceBox />
+      </div>
+    </div>
+  );
+}
+
+/** "Where your workspace lives": a folder you can share with git, or the app until you choose. */
+function WorkspaceBox() {
+  const ws = useWorkspace();
+  const actions = useWorkspaceActions();
+  const recents = ws.recentFolders.slice(0, 3);
+  const linkClass = "cursor-pointer text-fg2 underline decoration-line2 underline-offset-[3px] hover:text-fg hover:decoration-current";
+
+  if (ws.source.kind === "folder") {
+    return (
+      <div className="mt-5 rounded-lg border border-dashed border-line2 bg-bg0 p-3.5">
+        <div className="mb-1 font-medium">Where your workspace lives</div>
+        <div className="text-[12.5px] leading-normal text-fg3">
+          In <span className="font-mono text-fg2">{ws.sourcePath}</span>: one file per request, ready to commit and share with git.
         </div>
       </div>
+    );
+  }
+  return (
+    <div className="mt-5 rounded-lg border border-dashed border-line2 bg-bg0 p-3.5">
+      <div className="mb-1 font-medium">Where your workspace lives</div>
+      <div className="mb-2.5 text-[12.5px] leading-normal text-fg3">
+        In a folder you choose, one plain file per request, so a team can share it through any git repository. Until you pick one, it
+        stays in this app.
+      </div>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <button
+          type="button"
+          onClick={() => void actions.openFolder()}
+          className="h-8 cursor-pointer rounded-md border border-line2 px-3.5 font-medium whitespace-nowrap text-fg2 hover:bg-bg2 hover:text-fg"
+        >
+          Open folder…
+        </button>
+        <button type="button" onClick={() => toast("OK. Your work stays in the app until you choose a folder.")} className={linkClass}>
+          Decide later
+        </button>
+      </div>
+      {recents.length > 0 && (
+        <div className="mt-3 grid gap-1 border-t border-line pt-2.5">
+          <div className="text-[11px] text-fg3">Recent</div>
+          {recents.map((root) => (
+            <button
+              key={root}
+              type="button"
+              title={root}
+              onClick={() => void actions.openFolder(root)}
+              className="flex h-7 min-w-0 cursor-pointer items-center gap-2 rounded-md px-1.5 text-left hover:bg-bg2"
+            >
+              <FolderGit2 className="size-3.5 flex-none text-fg3" strokeWidth={1.8} />
+              <span className="flex-none text-fg">{folderName(root)}</span>
+              <span className="min-w-0 truncate font-mono text-[11.5px] text-fg3">{root}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

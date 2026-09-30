@@ -11,6 +11,7 @@ import { StatusPill } from "../StatusPill";
 import { HeadersTable } from "../HeadersTable";
 import { formatSize } from "../format";
 import { connectPopout } from "./transport";
+import { useSuppressNativeContextMenu } from "@/features/shell/useSuppressNativeContextMenu";
 import type { ResponseSnapshot } from "./snapshot";
 
 /** Root of a pop-out response window (`/?popout=<id>`). */
@@ -37,6 +38,7 @@ export function ResponseWindowApp({ id }: { id: string }) {
 }
 
 function ResponseWindow({ id }: { id: string }) {
+  useSuppressNativeContextMenu();
   const [snapshot, setSnapshot] = useState<ResponseSnapshot | null>(null);
   const [pending, setPending] = useState<ResponseSnapshot | null>(null);
   const [follow, setFollow] = useState(true);
@@ -135,7 +137,7 @@ function ResponseWindow({ id }: { id: string }) {
           <div className="h-full overflow-auto">
             <HeadersTable headers={snapshot.headers} />
           </div>
-        ) : snapshot.bodyText === "" ? (
+        ) : snapshot.rawBodyText === "" ? (
           <div className="px-3 py-3.5 text-[12.5px] text-fg3">
             {snapshot.status} {snapshot.statusText}. The response has no body.
           </div>
@@ -143,7 +145,6 @@ function ResponseWindow({ id }: { id: string }) {
           <ResponseViewer
             key={snapshot.receivedAt}
             variant="window"
-            bodyText={snapshot.bodyText}
             rawText={snapshot.rawBodyText}
             isJson={snapshot.isJson}
           />

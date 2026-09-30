@@ -1,10 +1,10 @@
 import type { ReactNode } from "react";
 import type { SatchelRequest } from "@/types";
 import type { VariableContext } from "@/variables";
-import { useSession, type RequestTab } from "@/state/session";
+import { useSessionCore, type RequestTab } from "@/state/session";
 import { pathParamNames } from "@/url";
 import { cn } from "@/lib/utils";
-import { RateLimitTab } from "@/features/burst/RateLimitTab";
+import { onDemand } from "@/features/shell/onDemand";
 import { ParamsTab } from "./ParamsTab";
 import { HeadersTab } from "./HeadersTab";
 import { AuthTab } from "./AuthTab";
@@ -15,6 +15,8 @@ interface RequestPaneProps {
   context: VariableContext;
   update: (updater: (r: SatchelRequest) => SatchelRequest) => void;
 }
+
+const RateLimitTab = onDemand(() => import("@/features/burst/RateLimitTab").then((m) => m.RateLimitTab));
 
 const AUTH_TAG = { bearer: "Bearer", basic: "Basic", apikey: "Key" } as const;
 
@@ -27,7 +29,7 @@ function bodyTag(body: SatchelRequest["body"]): string | undefined {
 
 /** Left pane of the request view: Params / Headers / Body / Auth / Rate Limit. */
 export function RequestPane({ request, context, update }: RequestPaneProps) {
-  const session = useSession();
+  const session = useSessionCore();
   const tab = session.requestTab(request.id, request);
   const paramCount = request.params.filter((p) => p.enabled && p.key).length + pathParamNames(request.url).length;
   const headerCount = request.headers.filter((h) => h.enabled && h.key).length;

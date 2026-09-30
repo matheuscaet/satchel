@@ -1,6 +1,7 @@
 import type { KeyValue, SatchelRequest } from "./types";
 import { resolveVariables } from "./collectionTree";
 import { applyPathParams, normalizeRequest } from "./url";
+import { base64Utf8 } from "./lib/base64";
 
 // Shared by single sends and the Rate Limit burst runner so both build the
 // exact same request off a SatchelRequest + variable set.
@@ -15,7 +16,7 @@ export function buildHeaders(request: SatchelRequest, variables: KeyValue[]): He
   if (auth.type === "basic" && auth.username) {
     const user = resolveVariables(auth.username, variables);
     const pass = resolveVariables(auth.password, variables);
-    headers.set("Authorization", `Basic ${btoa(`${user}:${pass}`)}`);
+    headers.set("Authorization", `Basic ${base64Utf8(`${user}:${pass}`)}`);
   }
   if (auth.type === "apikey" && auth.in === "header" && auth.key) headers.set(auth.key, resolveVariables(auth.value, variables));
   const body = request.body;

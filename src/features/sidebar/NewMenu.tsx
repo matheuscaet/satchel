@@ -5,7 +5,7 @@ import { MOD } from "@/components/common/Kbd";
 import { MenuContent, MenuItem, MenuSeparator } from "@/features/shell/menu";
 import { IconButton } from "@/features/shell/IconButton";
 import { useWorkspace } from "@/state/workspace";
-import { useSession } from "@/state/session";
+import { useSessionCore } from "@/state/session";
 import { useUi } from "@/state/ui";
 import { useAppActions } from "@/state/actions";
 
@@ -17,7 +17,7 @@ interface NewMenuProps {
 /** The sidebar's "+" menu: create or import. */
 export function NewMenu({ onCreated }: NewMenuProps) {
   const ws = useWorkspace();
-  const session = useSession();
+  const session = useSessionCore();
   const ui = useUi();
   const actions = useAppActions();
   // When an item was chosen, focus belongs to whatever it opened (URL field, rename input), not the "+" button.

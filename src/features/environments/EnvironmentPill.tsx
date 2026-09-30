@@ -4,7 +4,7 @@ import { EnvDot } from "@/components/common/EnvDot";
 import { MOD } from "@/components/common/Kbd";
 import { MenuContent, MenuHead, MenuItem, MenuSeparator } from "@/features/shell/menu";
 import { useWorkspace } from "@/state/workspace";
-import { useSession } from "@/state/session";
+import { useSessionCore } from "@/state/session";
 import { useUi } from "@/state/ui";
 import { useAppActions } from "@/state/actions";
 import { cn } from "@/lib/utils";
@@ -12,7 +12,7 @@ import { cn } from "@/lib/utils";
 /** Header pill showing the active environment; opens the switch menu. */
 export function EnvironmentPill() {
   const ws = useWorkspace();
-  const session = useSession();
+  const session = useSessionCore();
   const ui = useUi();
   const actions = useAppActions();
   const environments = ws.workspace.environments;

@@ -14,6 +14,9 @@ export interface KeyValue {
   key: string;
   value: string;
   enabled: boolean;
+  // Variables only: the value is personal (a token, a password). In a
+  // workspace folder it is kept in .satchel/local.json, never in shared files.
+  secret?: boolean;
 }
 
 // A multipart/form-data field. File fields keep a path on disk (read at send

@@ -1,7 +1,9 @@
 import type { ClipboardEvent, Ref } from "react";
 import type { HttpMethod } from "@/types";
 import type { VariableContext } from "@/variables";
+import { SquareTerminal } from "lucide-react";
 import { Kbd, MOD } from "@/components/common/Kbd";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { VariableInput } from "@/features/variables/VariableInput";
 import { MethodMenu } from "./MethodMenu";
@@ -17,11 +19,13 @@ interface UrlBarProps {
   onCancel: () => void;
   /** Return true when the pasted text was taken (e.g. a curl command) */
   onPasteText: (text: string) => boolean;
+  /** Copy the request as a curl command; resolve=false keeps {{variables}} as written */
+  onCopyCurl?: (resolve: boolean) => void;
   inputRef?: Ref<HTMLInputElement>;
 }
 
 /** Method | URL | Send, in one 36px bordered bar. */
-export function UrlBar({ method, url, context, sending, onMethodChange, onUrlChange, onSend, onCancel, onPasteText, inputRef }: UrlBarProps) {
+export function UrlBar({ method, url, context, sending, onMethodChange, onUrlChange, onSend, onCancel, onPasteText, onCopyCurl, inputRef }: UrlBarProps) {
   const onPaste = (e: ClipboardEvent<HTMLInputElement>) => {
     if (onPasteText(e.clipboardData.getData("text"))) e.preventDefault();
   };
@@ -48,6 +52,24 @@ export function UrlBar({ method, url, context, sending, onMethodChange, onUrlCha
           aria-label="URL"
         />
       </div>
+      {onCopyCurl && (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <button
+              type="button"
+              aria-label="Copy as cURL"
+              onClick={(e) => onCopyCurl(!e.shiftKey)}
+              className="my-[3px] grid w-7 flex-none cursor-pointer place-items-center rounded-sm text-fg3 transition-colors duration-150 hover:bg-bg2 hover:text-fg"
+            >
+              <SquareTerminal className="size-[15px]" strokeWidth={1.8} />
+            </button>
+          </TooltipTrigger>
+          <TooltipContent side="bottom" sideOffset={4} className="px-2 py-1 text-[11.5px]">
+            Copy as cURL
+            <span className="ml-1.5 opacity-60">⇧-click keeps {"{{variables}}"}</span>
+          </TooltipContent>
+        </Tooltip>
+      )}
       <button
         type="button"
         onClick={sending ? onCancel : onSend}

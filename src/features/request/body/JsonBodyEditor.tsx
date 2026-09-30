@@ -8,6 +8,8 @@ import { jsonHighlightParts, type HighlightPart } from "./jsonHighlight";
 import { isJsonWithVariables } from "./json";
 
 const INDENT = "  ";
+/** Past this, JSON coloring is skipped (variables still show): a pasted multi-MB body would mount a span per token. */
+const HIGHLIGHT_LIMIT = 50_000;
 
 interface JsonBodyEditorProps {
   value: string;
@@ -47,10 +49,15 @@ function outdent(el: HTMLTextAreaElement, onChange: (v: string) => void) {
 export function JsonBodyEditor({ value, onChange, context, json = true, "aria-label": ariaLabel }: JsonBodyEditorProps) {
   const ref = useRef<HTMLTextAreaElement>(null);
   const editedSinceFocus = useRef(false);
-  const lineCount = useMemo(() => value.split("\n").length, [value]);
+  // One text node for the whole gutter, rather than an element per line.
+  const lineNumbers = useMemo(() => {
+    let n = 1;
+    for (let i = value.indexOf("\n"); i >= 0; i = value.indexOf("\n", i + 1)) n++;
+    return Array.from({ length: n }, (_, i) => i + 1).join("\n");
+  }, [value]);
   const parts = useMemo<HighlightPart[]>(
     () =>
-      json
+      json && value.length <= HIGHLIGHT_LIMIT
         ? jsonHighlightParts(value)
         : textSegments(value).map((s) => (s.kind === "var" ? { text: s.text, variable: s.key } : { text: s.text })),
     [json, value],
@@ -76,12 +83,8 @@ export function JsonBodyEditor({ value, onChange, context, json = true, "aria-la
         }
       }}
     >
-      <div data-gutter aria-hidden className="pr-2.5 pl-3 text-right text-fg3 opacity-60 select-none">
-        {Array.from({ length: lineCount }, (_, i) => (
-          <div key={i} data-gutter>
-            {i + 1}
-          </div>
-        ))}
+      <div data-gutter aria-hidden className="pr-2.5 pl-3 text-right whitespace-pre text-fg3 opacity-60 select-none">
+        {lineNumbers}
       </div>
       <div data-vf className="relative min-h-5 min-w-0 pr-4">
         <div data-vf-mirror aria-hidden className="pointer-events-none whitespace-pre text-fg">

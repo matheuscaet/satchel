@@ -9,17 +9,16 @@ import { copyWithToast } from "./copy";
 import { displayPath, resolvePathQuery, type JsonPath } from "./jsonPath";
 import { MATCH_CAP, searchText, searchTree, type Range, type SearchScope } from "./jsonSearch";
 import { JsonTree, type JsonTreeHandle } from "./JsonTree";
-import { parseJsonCached, type ParsedJson } from "./parseJson";
+import { parseJsonCached, prettyJsonCached, type ParsedJson } from "./parseJson";
 import { SearchBar } from "./SearchBar";
 import { ToolbarButton } from "./ToolbarButton";
 import { useViewMode, type ViewMode } from "./useViewMode";
 import { findRecordLists } from "./table/tableModel";
 import { TableView, useTableState } from "./table/TableView";
+import { VirtualCode } from "./VirtualCode";
 
 export interface ResponseViewerProps {
-  /** pretty-printed JSON when isJson, else the text */
-  bodyText: string;
-  /** body exactly as received */
+  /** body exactly as received; JSON is indented here for the Pretty view */
   rawText: string;
   isJson: boolean;
   variant: "pane" | "window";
@@ -37,11 +36,13 @@ const NO_RANGES: Range[] = [];
 const NOT_JSON: ParsedJson = { ok: false };
 /** Bodies above this size debounce the search while typing. */
 const DEBOUNCE_ABOVE = 200_000;
+/** Pretty/Raw bodies above this size render only the rows in view. */
+const VIRTUALIZE_ABOVE = 100_000;
 
 /** Response body with Pretty / Tree / Raw views, search, and copy. Used by the response pane and the pop-out window. */
-export function ResponseViewer({ bodyText, rawText, isJson, variant, onOpenWindow }: ResponseViewerProps) {
+export function ResponseViewer({ rawText, isJson, variant, onOpenWindow }: ResponseViewerProps) {
   const isWindow = variant === "window";
-  const parsed = useMemo(() => (isJson ? parseJsonCached(bodyText) : NOT_JSON), [bodyText, isJson]);
+  const parsed = useMemo(() => (isJson ? parseJsonCached(rawText) : NOT_JSON), [rawText, isJson]);
   const [stored, setMode] = useViewMode();
   // Lists of records the Table view can show (the root array, or envelopes like { data: [...] }).
   const lists = useMemo(() => (parsed.ok ? findRecordLists(parsed.value) : []), [parsed]);
@@ -49,14 +50,16 @@ export function ResponseViewer({ bodyText, rawText, isJson, variant, onOpenWindo
   // A remembered mode this body can't show falls back: Table → Tree → Pretty.
   const mode: ViewMode =
     stored === "table" && !lists.length ? (parsed.ok ? "tree" : "pretty") : stored === "tree" && !parsed.ok ? "pretty" : stored;
-  const text = mode === "raw" ? rawText : bodyText;
+  // Indented only when the Pretty view shows it: Tree and Table work from the parsed value.
+  const indent = mode === "pretty" && isJson;
+  const text = useMemo(() => (indent ? prettyJsonCached(rawText) : rawText), [indent, rawText]);
 
   // Search
   const [searchOpen, setSearchOpen] = useState(isWindow);
   const [input, setInput] = useState("");
   const [scope, setScope] = useState<SearchScope>("all");
   const debounced = useDebounced(input.trim(), 180);
-  const query = bodyText.length > DEBOUNCE_ABOVE ? debounced : input.trim();
+  const query = rawText.length > DEBOUNCE_ABOVE ? debounced : input.trim();
   const effScope: SearchScope = isJson ? scope : "all";
   const inputRef = useRef<HTMLInputElement>(null);
   const [focusTick, setFocusTick] = useState(0);
@@ -201,7 +204,7 @@ export function ResponseViewer({ bodyText, rawText, isJson, variant, onOpenWindo
               <FileSpreadsheet />
             </ToolbarButton>
           )}
-          <ToolbarButton label="Copy body" onClick={() => void copyWithToast(text, "Body copied.")}>
+          <ToolbarButton label="Copy body" onClick={() => void copyWithToast(mode === "raw" || !isJson ? rawText : prettyJsonCached(rawText), "Body copied.")}>
             <Copy />
           </ToolbarButton>
           {onOpenWindow && (
@@ -214,16 +217,25 @@ export function ResponseViewer({ bodyText, rawText, isJson, variant, onOpenWindo
         {!isWindow && searchOpen && <div className="flex h-[34px] animate-fade-in items-center border-b border-line px-2">{searchBar}</div>}
 
         {mode === "table" && table.list ? (
-          <TableView key={bodyText} table={table} query={query} activeMatch={active} />
+          <TableView key={rawText} table={table} query={query} activeMatch={active} />
         ) : mode === "tree" && parsed.ok ? (
           <JsonTree
-            key={bodyText}
+            key={rawText}
             ref={treeRef}
             root={parsed.value}
             search={treeSearch}
             query={query}
             activeMatch={active}
             onSelect={setSelectedPath}
+          />
+        ) : text.length > VIRTUALIZE_ABOVE ? (
+          <VirtualCode
+            key={mode}
+            text={text}
+            json={mode === "pretty" && isJson}
+            ranges={ranges}
+            activeMatch={count ? active : -1}
+            layout={mode === "raw" ? "raw" : "pretty"}
           />
         ) : (
           <div className="min-h-0 overflow-auto">

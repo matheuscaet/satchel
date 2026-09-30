@@ -2,10 +2,12 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNo
 import { createPortal } from "react-dom";
 import { Check } from "lucide-react";
 import { useWorkspace } from "@/state/workspace";
-import { useSession } from "@/state/session";
+import { useSessionCore } from "@/state/session";
 import { resolveVariable, mergedVariables, type VariableContext } from "@/variables";
 import { findVariable } from "@/variableTokens";
 import { cn } from "@/lib/utils";
+import { displayValue } from "@/features/environments/matrixModel";
+import { SecretTag } from "@/features/environments/SecretTag";
 import { HOVER_TOKEN_SELECTOR, hitMirrorToken } from "./hitTest";
 import { resolvePlain, resolverFor } from "./segments";
 
@@ -36,7 +38,9 @@ interface VariableHoverLayerProps {
  * by rect, since the mirror doesn't take pointer events).
  */
 export function VariableHoverLayer({ rootRef, requestId, onEditPathParam }: VariableHoverLayerProps) {
-  const [open, setOpen] = useState<{ target: HoverTarget; anchor: DOMRect } | null>(null);
+  // `id` changes per opening, so state inside the card (a revealed secret) lasts one popover instance.
+  const [open, setOpen] = useState<{ target: HoverTarget; anchor: DOMRect; id: number } | null>(null);
+  const openCount = useRef(0);
   const [visible, setVisible] = useState(false);
   const popRef = useRef<HTMLDivElement>(null);
   const forEl = useRef<HTMLElement | null>(null);
@@ -70,7 +74,7 @@ export function VariableHoverLayer({ rootRef, requestId, onEditPathParam }: Vari
             const t = targetOf(el);
             if (!t || !el.isConnected) return;
             forEl.current = el;
-            setOpen({ target: t, anchor: el.getBoundingClientRect() });
+            setOpen({ target: t, anchor: el.getBoundingClientRect(), id: ++openCount.current });
             // next frame, so the first show also fades in
             requestAnimationFrame(() => setVisible(forEl.current === el));
           }, SHOW_DELAY);
@@ -139,7 +143,7 @@ export function VariableHoverLayer({ rootRef, requestId, onEditPathParam }: Vari
           }}
         />
       ) : (
-        <VariableCard requestId={requestId} name={open.target.name} onDone={hide} />
+        <VariableCard key={open.id} requestId={requestId} name={open.target.name} onDone={hide} />
       )}
     </div>,
     document.body,
@@ -158,18 +162,28 @@ function LinkButton({ onClick, children }: { onClick: () => void; children: Reac
   );
 }
 
-function Header({ name, tone, source }: { name: string; tone: "var" | "miss" | "path"; source: string }) {
+interface HeaderProps {
+  name: string;
+  tone: "var" | "miss" | "path";
+  source: string;
+  secret?: boolean;
+}
+
+function Header({ name, tone, source, secret }: HeaderProps) {
   return (
     <div className="mb-1.5 flex items-baseline justify-between gap-2">
-      <span
-        className={cn(
-          "font-mono text-[12.5px] font-medium",
-          tone === "var" && "text-brass",
-          tone === "miss" && "text-err",
-          tone === "path" && "text-j-k",
-        )}
-      >
-        {name}
+      <span className="min-w-0">
+        <span
+          className={cn(
+            "font-mono text-[12.5px] font-medium break-all",
+            tone === "var" && "text-brass",
+            tone === "miss" && "text-err",
+            tone === "path" && "text-j-k",
+          )}
+        >
+          {name}
+        </span>
+        {secret && <SecretTag />}
       </span>
       <span className="text-fg3">{source}</span>
     </div>
@@ -190,17 +204,35 @@ function scopeLabel(label: string, scopeName: string) {
 
 function VariableCard({ requestId, name, onDone }: { requestId: string; name: string; onDone: () => void }) {
   const ws = useWorkspace();
-  const session = useSession();
+  const session = useSessionCore();
   const ctx: VariableContext = ws.variableContext(requestId);
   const res = resolveVariable(name, ctx);
   const env = ws.activeEnvironment;
+  const secret = ws.isSecretVariable(name);
+  const [revealed, setRevealed] = useState(false);
+  const shown = (value: string) => displayValue(value, secret, revealed);
 
   if (res.winner >= 0) {
     const win = res.chain[res.winner];
     return (
       <>
-        <Header name={`{{${name}}}`} tone="var" source={`from ${scopeLabel(win.label, win.scopeName)}`} />
-        <ValueBox>{win.value}</ValueBox>
+        <Header name={`{{${name}}}`} tone="var" source={`from ${scopeLabel(win.label, win.scopeName)}`} secret={secret} />
+        <ValueBox>
+          {secret && !revealed ? (
+            <span className="flex items-center justify-between gap-2">
+              <span aria-label="Hidden secret value">{shown(win.value ?? "")}</span>
+              <button
+                type="button"
+                onClick={() => setRevealed(true)}
+                className="cursor-pointer font-sans text-[11.5px] text-fg3 hover:text-fg"
+              >
+                Show
+              </button>
+            </span>
+          ) : (
+            win.value
+          )}
+        </ValueBox>
         <div className="mb-2 grid gap-0.5">
           {res.chain.map((c, i) => {
             const isWin = i === res.winner;
@@ -209,7 +241,7 @@ function VariableCard({ requestId, name, onDone }: { requestId: string; name: st
               <div key={c.scope} className={cn("grid grid-cols-[14px_1fr_auto] items-center gap-1.5 text-fg3", isWin && "text-fg")}>
                 <span className="grid place-items-center">{isWin && <Check className="size-2.5" strokeWidth={3} />}</span>
                 <span className="truncate">{scopeLabel(c.label, c.scopeName)}</span>
-                <span className={cn("max-w-[140px] truncate font-mono", shadowed && "line-through")}>{c.value !== undefined ? c.value : "—"}</span>
+                <span className={cn("max-w-[140px] truncate font-mono", shadowed && "line-through")}>{c.value !== undefined ? shown(c.value) || "—" : "—"}</span>
               </div>
             );
           })}
@@ -232,7 +264,7 @@ function VariableCard({ requestId, name, onDone }: { requestId: string; name: st
   const definedIn = ws.workspace.environments.filter((e) => findVariable(name, e.variables) !== undefined).map((e) => e.name);
   return (
     <>
-      <Header name={`{{${name}}}`} tone="miss" source={env ? `not defined in ${env.name}` : "not defined"} />
+      <Header name={`{{${name}}}`} tone="miss" source={env ? `not defined in ${env.name}` : "not defined"} secret={secret} />
       <div className="mb-2 grid gap-0.5">
         {res.chain.map((c) => (
           <div key={c.scope} className="grid grid-cols-[14px_1fr_auto] items-center gap-1.5 text-fg3">

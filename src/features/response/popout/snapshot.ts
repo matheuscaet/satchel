@@ -11,8 +11,6 @@ export interface ResponseSnapshot {
   timeMs: number;
   sizeBytes: number;
   headers: [string, string][];
-  /** pretty-printed when JSON */
-  bodyText: string;
   /** exactly as received */
   rawBodyText: string;
   isJson: boolean;
@@ -30,7 +28,6 @@ export function snapshotOf(request: SatchelRequest, response: HttpResponse, rece
     timeMs: response.timeMs,
     sizeBytes: response.sizeBytes,
     headers: response.headers,
-    bodyText: response.bodyText,
     rawBodyText: response.rawBodyText,
     isJson: response.isJson,
     receivedAt,

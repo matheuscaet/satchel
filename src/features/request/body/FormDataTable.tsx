@@ -8,6 +8,7 @@ import { MenuContent, MenuItem } from "@/features/shell/menu";
 import { formatSize } from "@/features/response/format";
 import { KeyValueTable } from "../KeyValueTable";
 import { pickFile } from "./pickFile";
+import { errorMessage } from "@/lib/errors";
 
 const newField = (): FormField => ({ key: "", value: "", enabled: true, type: "text" });
 
@@ -63,7 +64,7 @@ function FileCell({ row, update }: { row: FormField; update: (row: FormField) =>
       const picked = await pickFile();
       if (picked) update({ ...row, type: "file", fileName: picked.fileName, filePath: picked.filePath, fileSize: picked.fileSize });
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : "Couldn't open the file picker.");
+      toast.error(errorMessage(err, "Couldn't open the file picker."));
     }
   };
 

@@ -4,6 +4,8 @@ import { cn } from "@/lib/utils";
 import { resolvedUrlSegments, resolverFor } from "@/features/variables/segments";
 
 const TOKEN = "cursor-help border-b border-dotted";
+/** Secret values never show in the line; hovering still tells where they come from. */
+const MASK = "••••••••";
 
 /** "→ https://…" under the URL bar: every substituted value is hoverable for its provenance. */
 export function ResolvedUrl({ url, pathVariables, context }: { url: string; pathVariables?: Record<string, string>; context: VariableContext }) {
@@ -11,6 +13,10 @@ export function ResolvedUrl({ url, pathVariables, context }: { url: string; path
     () => resolvedUrlSegments(url, pathVariables, resolverFor(mergedVariables(context))),
     [url, pathVariables, context],
   );
+  const secrets = useMemo(() => {
+    const all = [...(context.environment?.variables ?? []), ...(context.collection?.variables ?? []), ...context.globals];
+    return new Set(all.filter((v) => v.secret).map((v) => v.key));
+  }, [context]);
   return (
     <div className="mt-1.5 flex items-baseline gap-1.5 overflow-hidden pl-[104px] font-mono text-[11.5px] whitespace-nowrap text-fg3 max-[820px]:pl-0.5">
       <span>→</span>
@@ -22,7 +28,7 @@ export function ResolvedUrl({ url, pathVariables, context }: { url: string; path
           if (s.kind === "var")
             return (
               <span key={i} data-resolved-token data-var={s.key} className={cls}>
-                {missing ? `{{${s.key}}}` : s.value}
+                {missing ? `{{${s.key}}}` : secrets.has(s.key) ? MASK : s.value}
               </span>
             );
           return (

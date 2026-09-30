@@ -1,14 +1,16 @@
-import { useEffect, useRef, type KeyboardEvent } from "react";
+import { memo, useEffect, useRef, type KeyboardEvent } from "react";
 import { Plus } from "lucide-react";
 import { useWorkspace } from "@/state/workspace";
-import { useSession, ENVIRONMENTS_TAB } from "@/state/session";
+import type { HttpMethod } from "@/types";
+import { useSessionCore, ENVIRONMENTS_TAB } from "@/state/session";
 import { useAppActions } from "@/state/actions";
 import { Tab } from "./Tab";
+import { TabContextMenu } from "./TabContextMenu";
 
 /** 36px strip of open tabs (requests + the Environments tab) with a trailing "+". */
 export function TabStrip() {
   const ws = useWorkspace();
-  const session = useSession();
+  const session = useSessionCore();
   const actions = useAppActions();
   const stripRef = useRef<HTMLDivElement>(null);
   const active = session.activeTab;
@@ -35,22 +37,22 @@ export function TabStrip() {
     <div ref={stripRef} className="flex items-stretch overflow-x-auto border-b border-line bg-bg0 scrollbar-none">
       <div role="tablist" aria-label="Open tabs" className="flex items-stretch" onKeyDown={onKeyDown}>
         {session.tabs.map((id) => {
-          const close = () => session.closeTab(id);
-          const select = () => session.setActiveTab(id);
           if (id === ENVIRONMENTS_TAB) {
-            return <Tab key={id} id={id} label="Environments" active={id === active} onSelect={select} onClose={close} />;
+            return (
+              <StripTab key={id} id={id} label="Environments" active={id === active} onSelect={session.setActiveTab} onClose={session.closeTab} />
+            );
           }
           const request = ws.findRequest(id)?.request;
           if (!request) return null;
           return (
-            <Tab
+            <StripTab
               key={id}
               id={id}
               label={request.name}
               method={request.method}
               active={id === active}
-              onSelect={select}
-              onClose={close}
+              onSelect={session.setActiveTab}
+              onClose={session.closeTab}
             />
           );
         })}
@@ -67,3 +69,21 @@ export function TabStrip() {
     </div>
   );
 }
+
+interface StripTabProps {
+  id: string;
+  label: string;
+  method?: HttpMethod;
+  active: boolean;
+  onSelect: (id: string) => void;
+  onClose: (id: string) => void;
+}
+
+/** A tab with its context menu; re-renders only when its own label, method or state changes. */
+const StripTab = memo(function StripTab({ id, label, method, active, onSelect, onClose }: StripTabProps) {
+  return (
+    <TabContextMenu id={id}>
+      <Tab id={id} label={label} method={method} active={active} onSelect={() => onSelect(id)} onClose={() => onClose(id)} />
+    </TabContextMenu>
+  );
+});

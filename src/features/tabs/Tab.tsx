@@ -1,9 +1,10 @@
+import type { ComponentProps } from "react";
 import { Layers, X } from "lucide-react";
 import type { HttpMethod } from "@/types";
 import { MethodLabel } from "@/components/common/MethodLabel";
 import { cn } from "@/lib/utils";
 
-interface TabProps {
+interface TabProps extends Omit<ComponentProps<"div">, "onSelect"> {
   id: string;
   label: string;
   /** Request method; omitted for the Environments tab (layers icon) */
@@ -14,9 +15,11 @@ interface TabProps {
 }
 
 /** One tab in the strip: method + name, brass top line when active, close on hover/active/middle-click. */
-export function Tab({ id, label, method, active, onSelect, onClose }: TabProps) {
+export function Tab({ id, label, method, active, onSelect, onClose, className, ...rest }: TabProps) {
+  // `rest` carries what a wrapping trigger adds (the tab context menu's ref, onContextMenu, data-state).
   return (
     <div
+      {...rest}
       role="tab"
       aria-selected={active}
       tabIndex={active ? 0 : -1}
@@ -39,6 +42,7 @@ export function Tab({ id, label, method, active, onSelect, onClose }: TabProps) 
         }
       }}
       className={cn(
+        className,
         "group relative flex max-w-[210px] flex-none cursor-pointer items-center gap-[7px] border-r border-line pr-2 pl-3 whitespace-nowrap text-fg3 select-none hover:bg-bg1 hover:text-fg2 focus-visible:[outline-offset:-1.5px]",
         active &&
           "bg-bg1 text-fg hover:text-fg before:absolute before:inset-x-0 before:top-0 before:h-[1.5px] before:bg-brass after:absolute after:inset-x-0 after:-bottom-px after:h-px after:bg-bg1",

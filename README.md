@@ -20,8 +20,27 @@ Satchel is a standalone tool first: build collections, folders, and requests dir
 - **Rate Limit** burst tests: N requests per second for T seconds, charted by latency with `X-RateLimit-Remaining` and the first 429 marked
 - Postman import with a preview: folders, requests, variables, form-data, path variables, collection auth, environment files, and warnings for anything that doesn't carry over (scripts, files on another machine, undefined variables). Drop the export on the window, or pick it from the `+` menu
 - Paste a `curl` command anywhere (or into an open request's URL field to replace it in place) to get a request from it
-- Save/open a workspace as a plain `.json` file on disk, with an in-memory `localStorage` cache so nothing's lost before you've picked a save location
+- Workspaces are folders — one file per request — that a team shares through any git repository, with the git basics (status, commit, pull, push) one click away. See [Sharing a workspace with git](#sharing-a-workspace-with-git)
+- Until you pick a folder, everything is kept in the app; older single-file `.json` workspaces still open and convert to a folder
 - Dark and light themes
+
+## Sharing a workspace with git
+
+A workspace is a folder, usually a git repository (or a folder inside your API's own repository):
+
+```
+satchel.json                         format marker, order of collections and environments, globals
+collections/<name>/collection.json   a collection: variables, order of its entries
+collections/<name>/<folder>/folder.json
+collections/<name>/…/<request>.request.json   one request per file
+environments/<name>.json             one environment per file
+.satchel/                            your personal state; ignored by git on its own
+```
+
+- **Open or create one** with `⌘O` / `Ctrl+O` (or "Save as workspace folder…" to move what you have into one). Satchel only ever touches the files above; everything else in the folder is left alone.
+- **Secrets stay local, in your system keychain.** Mark a variable secret (the lock in *Environments & globals*) and its values go to the macOS Keychain, the Windows Credential Manager or the Secret Service (GNOME Keyring, KWallet) on Linux; the shared files keep an empty value, and `.satchel/local.json` only names the keychain entry. Without a keychain, they go to a file in Satchel's data folder that only you can read. The active environment is personal too, so switching environments never shows up in `git status`.
+- **You decide when to sync.** Satchel saves to the folder as you edit, like any editor; it never commits, pulls or pushes on its own. The branch chip in the header opens *Source control*: the changed files by request name, a commit box (only the files you select are committed, even when the workspace is inside a bigger repository), and Pull / Push / Fetch. It runs your system `git`, so your SSH keys and credential manager apply, and it works with any host.
+- **Changes from outside reload.** A `git pull` or branch switch in a terminal reloads the workspace. A file with merge conflict markers is listed under "files need attention" and left untouched until you resolve it.
 
 ## Getting started
 

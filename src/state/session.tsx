@@ -1,5 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
-import { sendRequest, SendError, type HttpResponse } from "@/http/send";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { sendRequest, type HttpResponse } from "@/http/send";
 import { startBurst, type BurstConfig, type BurstResult } from "@/http/burst";
 import { mergedVariables, isResolved } from "@/variables";
 import { VARIABLE_PATTERN } from "@/variableTokens";
@@ -8,6 +8,8 @@ import type { SatchelRequest } from "@/types";
 import { useWorkspace } from "./workspace";
 import { publishResponse } from "@/features/response/popout/transport";
 import { snapshotOf } from "@/features/response/popout/snapshot";
+import { errorMessage } from "@/lib/errors";
+import { mergeBySeq } from "@/features/burst/burstMath";
 
 /**
  * Runtime, per-window state that is NOT saved in the workspace file:
@@ -47,27 +49,33 @@ export interface MatrixFocus {
   freshEnvironmentId?: string;
 }
 
-interface SessionValue {
+/**
+ * Tabs, view state and actions. Split from the runs below so that a response
+ * arriving (or a burst reporting) doesn't re-render everything that only
+ * cares about tabs.
+ */
+interface SessionCore {
   tabs: TabId[];
   activeTab: TabId | null;
   openTab: (id: TabId) => void;
   closeTab: (id: TabId) => void;
+  /** Close every tab except `id` (which becomes active). */
+  closeOtherTabs: (id: TabId) => void;
+  /** Close the tabs after `id` in the strip. */
+  closeTabsToRight: (id: TabId) => void;
+  closeAllTabs: () => void;
   setActiveTab: (id: TabId) => void;
 
   requestTab: (requestId: string, request?: SatchelRequest) => RequestTab;
   setRequestTab: (requestId: string, tab: RequestTab) => void;
-  responseTab: (requestId: string) => ResponseTab;
   setResponseTab: (requestId: string, tab: ResponseTab) => void;
 
-  responses: Record<string, ResponseEntry | undefined>;
-  sending: Record<string, boolean | undefined>;
   /** Sends the request. Unless force, holds back and sets `blocker` when {{variables}} are unresolved. */
   send: (requestId: string, opts?: { force?: boolean }) => void;
   cancel: (requestId: string) => void;
   blocker: SendBlocker | null;
   clearBlocker: () => void;
 
-  bursts: Record<string, BurstRun | undefined>;
   burstConfig: BurstConfig;
   setBurstConfig: (config: BurstConfig) => void;
   startBurstRun: (requestId: string) => void;
@@ -87,8 +95,21 @@ interface SessionValue {
   requestUrlFocus: (requestId: string | null) => void;
 }
 
-const SessionContext = createContext<SessionValue | null>(null);
+/** What changes while requests run. Kept only for requests open in a tab. */
+interface SessionRuns {
+  responses: Record<string, ResponseEntry | undefined>;
+  sending: Record<string, boolean | undefined>;
+  bursts: Record<string, BurstRun | undefined>;
+  responseTab: (requestId: string) => ResponseTab;
+}
+
+export interface SessionValue extends SessionCore, SessionRuns {}
+
+const SessionContext = createContext<SessionCore | null>(null);
+const RunsContext = createContext<SessionRuns | null>(null);
 const TABS_KEY = "satchel.tabs";
+/** Burst results are batched into state at most this often (a run can report 200 times a second). */
+const BURST_FLUSH_MS = 100;
 
 function loadTabs(): { tabs: TabId[]; active: TabId | null } {
   try {
@@ -116,6 +137,14 @@ export function unresolvedVariables(request: SatchelRequest, isKnown: (key: stri
   return [...keys].filter((k) => !isKnown(k));
 }
 
+/** A copy of `map` without `ids` (the same object when none of them is in it). */
+function without<T>(map: Record<string, T>, ids: Set<string>): Record<string, T> {
+  if (!Object.keys(map).some((k) => ids.has(k))) return map;
+  const next = { ...map };
+  for (const id of ids) delete next[id];
+  return next;
+}
+
 export function SessionProvider({ children }: { children: ReactNode }) {
   const ws = useWorkspace();
   const initial = useRef(loadTabs());
@@ -133,14 +162,28 @@ export function SessionProvider({ children }: { children: ReactNode }) {
   const [focusUrlOf, setFocusUrlOf] = useState<string | null>(null);
   const aborts = useRef<Record<string, AbortController>>({});
   const burstStops = useRef<Record<string, () => void>>({});
+  /** The live run per request: results from a replaced run are dropped. */
+  const burstTokens = useRef<Record<string, object>>({});
+  /** Burst results not yet in state, flushed together (see BURST_FLUSH_MS). */
+  const burstBuffer = useRef<Record<string, BurstResult[]>>({});
+  const burstTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // The callbacks read the workspace through this ref, so they (and the context value)
+  // stay the same while the user types.
+  const wsRef = useRef(ws);
+  useLayoutEffect(() => {
+    wsRef.current = ws;
+  });
 
   // Drop tabs whose request no longer exists (deleted, or a different file was opened).
+  const collections = ws.workspace.collections;
   useEffect(() => {
+    const { findRequest } = wsRef.current;
     setTabs((t) => {
-      const next = t.filter((id) => id === ENVIRONMENTS_TAB || ws.findRequest(id));
+      const next = t.filter((id) => id === ENVIRONMENTS_TAB || findRequest(id));
       return next.length === t.length ? t : next;
     });
-  }, [ws.findRequest]);
+  }, [collections]);
   useEffect(() => {
     if (activeTab && !tabs.includes(activeTab)) setActiveTabState(tabs[tabs.length - 1] ?? null);
   }, [tabs, activeTab]);
@@ -152,65 +195,151 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     }
   }, [tabs, activeTab]);
 
+  const flushBursts = useCallback(() => {
+    if (burstTimer.current !== null) clearTimeout(burstTimer.current);
+    burstTimer.current = null;
+    const pending = burstBuffer.current;
+    burstBuffer.current = {};
+    const ids = Object.keys(pending);
+    if (!ids.length) return;
+    setBursts((b) => {
+      let next = b;
+      for (const id of ids) {
+        const run = b[id];
+        if (!run) continue;
+        if (next === b) next = { ...b };
+        next[id] = { ...run, results: mergeBySeq(run.results, pending[id]) };
+      }
+      return next;
+    });
+  }, []);
+
+  /**
+   * Let go of everything kept for these requests: an in-flight send is aborted,
+   * a burst stopped, and the response (which can be many MB), burst results and
+   * sub-tab choices dropped. Runs for every tab that closes.
+   */
+  const forget = useCallback((ids: string[]) => {
+    if (!ids.length) return;
+    const gone = new Set(ids);
+    for (const id of gone) {
+      aborts.current[id]?.abort();
+      delete aborts.current[id];
+      burstStops.current[id]?.();
+      delete burstStops.current[id];
+      delete burstTokens.current[id];
+      delete burstBuffer.current[id];
+    }
+    setResponses((m) => without(m, gone));
+    setSending((m) => without(m, gone));
+    setBursts((m) => without(m, gone));
+    setRequestTabs((m) => without(m, gone));
+    setResponseTabs((m) => without(m, gone));
+    setBlocker((b) => (b && gone.has(b.requestId) ? null : b));
+    setFocusUrlOf((f) => (f && gone.has(f) ? null : f));
+  }, []);
+
+  // Whatever way tabs go away (close, close others/to the right/all, deleted
+  // requests, another workspace opened), forget what they held.
+  const shownTabs = useRef(tabs);
+  useEffect(() => {
+    const previous = shownTabs.current;
+    shownTabs.current = tabs;
+    if (previous !== tabs) forget(previous.filter((id) => !tabs.includes(id)));
+  }, [tabs, forget]);
+
+  // Stop timers and in-flight work on unmount.
+  useEffect(
+    () => () => {
+      if (burstTimer.current !== null) clearTimeout(burstTimer.current);
+      Object.values(aborts.current).forEach((c) => c.abort());
+      Object.values(burstStops.current).forEach((stop) => stop());
+    },
+    [],
+  );
+
   const openTab = useCallback((id: TabId) => {
     setTabs((t) => (t.includes(id) ? t : [...t, id]));
     setActiveTabState(id);
     setBlocker(null);
   }, []);
 
-  const closeTab = useCallback(
-    (id: TabId) => {
-      setTabs((t) => {
-        const i = t.indexOf(id);
-        const next = t.filter((x) => x !== id);
-        if (id === activeTab) setActiveTabState(next[Math.min(i, next.length - 1)] ?? null);
-        return next;
-      });
-    },
-    [activeTab],
-  );
+  const closeTab = useCallback((id: TabId) => {
+    setTabs((t) => {
+      const i = t.indexOf(id);
+      if (i < 0) return t;
+      const next = t.filter((x) => x !== id);
+      setActiveTabState((active) => (active === id ? (next[Math.min(i, next.length - 1)] ?? null) : active));
+      return next;
+    });
+  }, []);
 
-  const send = useCallback(
-    (requestId: string, opts?: { force?: boolean }) => {
-      const loc = ws.findRequest(requestId);
-      if (!loc) return;
-      const ctx = ws.variableContext(requestId);
-      const missing = unresolvedVariables(loc.request, (k) => isResolved(k, ctx));
-      if (missing.length && !opts?.force) {
-        setBlocker({ requestId, missingVariables: missing });
-        return;
-      }
-      const emptyPath = pathParamNames(loc.request.url).filter((n) => !loc.request.pathVariables?.[n]);
-      if (emptyPath.length && !opts?.force) {
-        setRequestTabs((m) => ({ ...m, [requestId]: "params" }));
-        setResponses((r) => ({ ...r, [requestId]: { kind: "error", message: `Path parameter :${emptyPath[0]} needs a value.` } }));
-        return;
-      }
-      setBlocker(null);
-      aborts.current[requestId]?.abort();
-      const controller = new AbortController();
-      aborts.current[requestId] = controller;
-      setSending((s) => ({ ...s, [requestId]: true }));
-      setResponseTabs((m) => (m[requestId] === "burst" ? { ...m, [requestId]: "body" } : m));
-      sendRequest(loc.request, mergedVariables(ctx), controller.signal)
-        .then((response) => {
-          setResponses((r) => ({ ...r, [requestId]: { kind: "ok", response } }));
-          publishResponse(snapshotOf(loc.request, response));
-        })
-        .catch((err) => {
-          if (controller.signal.aborted) return;
-          const message = err instanceof SendError || err instanceof Error ? err.message : "Request failed";
-          setResponses((r) => ({ ...r, [requestId]: { kind: "error", message } }));
-        })
-        .finally(() => {
-          if (aborts.current[requestId] === controller) {
-            delete aborts.current[requestId];
-            setSending((s) => ({ ...s, [requestId]: false }));
-          }
-        });
-    },
-    [ws],
-  );
+  const closeOtherTabs = useCallback((id: TabId) => {
+    setTabs((t) => (t.includes(id) ? (t.length === 1 ? t : [id]) : t));
+    setActiveTabState(id);
+  }, []);
+
+  const closeTabsToRight = useCallback((id: TabId) => {
+    setTabs((t) => {
+      const i = t.indexOf(id);
+      if (i < 0 || i === t.length - 1) return t;
+      const next = t.slice(0, i + 1);
+      setActiveTabState((active) => (active && !next.includes(active) ? id : active));
+      return next;
+    });
+  }, []);
+
+  const closeAllTabs = useCallback(() => {
+    setTabs([]);
+    setActiveTabState(null);
+  }, []);
+
+  const setActiveTab = useCallback((id: TabId) => {
+    setActiveTabState(id);
+    setBlocker(null);
+  }, []);
+
+  const send = useCallback((requestId: string, opts?: { force?: boolean }) => {
+    const ws = wsRef.current;
+    const loc = ws.findRequest(requestId);
+    if (!loc) return;
+    const ctx = ws.variableContext(requestId);
+    const missing = unresolvedVariables(loc.request, (k) => isResolved(k, ctx));
+    if (missing.length && !opts?.force) {
+      setBlocker({ requestId, missingVariables: missing });
+      return;
+    }
+    const emptyPath = pathParamNames(loc.request.url).filter((n) => !loc.request.pathVariables?.[n]);
+    if (emptyPath.length && !opts?.force) {
+      setRequestTabs((m) => ({ ...m, [requestId]: "params" }));
+      setResponses((r) => ({ ...r, [requestId]: { kind: "error", message: `Path parameter :${emptyPath[0]} needs a value.` } }));
+      return;
+    }
+    setBlocker(null);
+    aborts.current[requestId]?.abort();
+    const controller = new AbortController();
+    aborts.current[requestId] = controller;
+    setSending((s) => ({ ...s, [requestId]: true }));
+    setResponseTabs((m) => (m[requestId] === "burst" ? { ...m, [requestId]: "body" } : m));
+    sendRequest(loc.request, mergedVariables(ctx), controller.signal)
+      .then((response) => {
+        // Cancelled, replaced by a newer send, or its tab closed while the body was read.
+        if (controller.signal.aborted) return;
+        setResponses((r) => ({ ...r, [requestId]: { kind: "ok", response } }));
+        publishResponse(snapshotOf(loc.request, response));
+      })
+      .catch((err) => {
+        if (controller.signal.aborted) return;
+        const message = errorMessage(err, "Request failed");
+        setResponses((r) => ({ ...r, [requestId]: { kind: "error", message } }));
+      })
+      .finally(() => {
+        if (aborts.current[requestId] === controller) {
+          delete aborts.current[requestId];
+          setSending((s) => ({ ...s, [requestId]: false }));
+        }
+      });
+  }, []);
 
   const cancel = useCallback((requestId: string) => {
     aborts.current[requestId]?.abort();
@@ -220,9 +349,13 @@ export function SessionProvider({ children }: { children: ReactNode }) {
 
   const startBurstRun = useCallback(
     (requestId: string) => {
+      const ws = wsRef.current;
       const loc = ws.findRequest(requestId);
       if (!loc) return;
       burstStops.current[requestId]?.();
+      const token = {};
+      burstTokens.current[requestId] = token;
+      delete burstBuffer.current[requestId];
       const config = burstConfig;
       const total = Math.min(Math.max(config.rps, 1), 200) * Math.min(Math.max(config.seconds, 1), 60);
       setBursts((b) => ({ ...b, [requestId]: { config, total, running: true, results: [], startedAt: Date.now() } }));
@@ -231,17 +364,20 @@ export function SessionProvider({ children }: { children: ReactNode }) {
         loc.request,
         mergedVariables(ws.variableContext(requestId)),
         config,
-        (result) =>
-          setBursts((b) => {
-            const run = b[requestId];
-            if (!run) return b;
-            const results = [...run.results, result].sort((x, y) => x.seq - y.seq);
-            return { ...b, [requestId]: { ...run, results } };
-          }),
-        () => setBursts((b) => (b[requestId] ? { ...b, [requestId]: { ...b[requestId]!, running: false } } : b)),
+        (result) => {
+          if (burstTokens.current[requestId] !== token) return;
+          (burstBuffer.current[requestId] ??= []).push(result);
+          if (burstTimer.current === null) burstTimer.current = setTimeout(flushBursts, BURST_FLUSH_MS);
+        },
+        () => {
+          if (burstTokens.current[requestId] !== token) return;
+          // Everything reported so far goes in with the "done", so the final numbers are exact.
+          flushBursts();
+          setBursts((b) => (b[requestId] ? { ...b, [requestId]: { ...b[requestId]!, running: false } } : b));
+        },
       );
     },
-    [ws, burstConfig],
+    [burstConfig, flushBursts],
   );
 
   const stopBurstRun = useCallback((requestId: string) => {
@@ -249,51 +385,118 @@ export function SessionProvider({ children }: { children: ReactNode }) {
     delete burstStops.current[requestId];
   }, []);
 
-  const value: SessionValue = {
-    tabs,
-    activeTab,
-    openTab,
-    closeTab,
-    setActiveTab: (id) => {
-      setActiveTabState(id);
-      setBlocker(null);
-    },
-    requestTab: (requestId, request) =>
+  const requestTab = useCallback(
+    (requestId: string, request?: SatchelRequest) =>
       requestTabs[requestId] ?? (request && request.body.mode !== "none" ? "body" : "params"),
-    setRequestTab: (requestId, tab) => setRequestTabs((m) => ({ ...m, [requestId]: tab })),
-    responseTab: (requestId) => {
-      const t = responseTabs[requestId] ?? "body";
-      return t === "burst" && !bursts[requestId] ? "body" : t;
-    },
-    setResponseTab: (requestId, tab) => setResponseTabs((m) => ({ ...m, [requestId]: tab })),
-    responses,
-    sending,
-    send,
-    cancel,
-    blocker,
-    clearBlocker: () => setBlocker(null),
-    bursts,
-    burstConfig,
-    setBurstConfig,
-    startBurstRun,
-    stopBurstRun,
-    matrixFocus,
-    openEnvironments: (focus) => {
+    [requestTabs],
+  );
+  const setRequestTab = useCallback((requestId: string, tab: RequestTab) => setRequestTabs((m) => ({ ...m, [requestId]: tab })), []);
+  const setResponseTab = useCallback((requestId: string, tab: ResponseTab) => setResponseTabs((m) => ({ ...m, [requestId]: tab })), []);
+  const clearBlocker = useCallback(() => setBlocker(null), []);
+  const openEnvironments = useCallback(
+    (focus?: MatrixFocus) => {
       setMatrixFocus(focus ?? null);
       openTab(ENVIRONMENTS_TAB);
     },
-    clearMatrixFocus: () => setMatrixFocus(null),
-    sweepKey,
-    bumpSweep: () => setSweepKey((k) => k + 1),
-    focusUrlOf,
-    requestUrlFocus: setFocusUrlOf,
-  };
+    [openTab],
+  );
+  const clearMatrixFocus = useCallback(() => setMatrixFocus(null), []);
+  const bumpSweep = useCallback(() => setSweepKey((k) => k + 1), []);
 
-  return <SessionContext.Provider value={value}>{children}</SessionContext.Provider>;
+  const core = useMemo<SessionCore>(
+    () => ({
+      tabs,
+      activeTab,
+      openTab,
+      closeTab,
+      closeOtherTabs,
+      closeTabsToRight,
+      closeAllTabs,
+      setActiveTab,
+      requestTab,
+      setRequestTab,
+      setResponseTab,
+      send,
+      cancel,
+      blocker,
+      clearBlocker,
+      burstConfig,
+      setBurstConfig,
+      startBurstRun,
+      stopBurstRun,
+      matrixFocus,
+      openEnvironments,
+      clearMatrixFocus,
+      sweepKey,
+      bumpSweep,
+      focusUrlOf,
+      requestUrlFocus: setFocusUrlOf,
+    }),
+    [
+      tabs,
+      activeTab,
+      openTab,
+      closeTab,
+      closeOtherTabs,
+      closeTabsToRight,
+      closeAllTabs,
+      setActiveTab,
+      requestTab,
+      setRequestTab,
+      setResponseTab,
+      send,
+      cancel,
+      blocker,
+      clearBlocker,
+      burstConfig,
+      startBurstRun,
+      stopBurstRun,
+      matrixFocus,
+      openEnvironments,
+      clearMatrixFocus,
+      sweepKey,
+      bumpSweep,
+      focusUrlOf,
+    ],
+  );
+
+  const runs = useMemo<SessionRuns>(
+    () => ({
+      responses,
+      sending,
+      bursts,
+      responseTab: (requestId) => {
+        const t = responseTabs[requestId] ?? "body";
+        return t === "burst" && !bursts[requestId] ? "body" : t;
+      },
+    }),
+    [responses, sending, bursts, responseTabs],
+  );
+
+  return (
+    <SessionContext.Provider value={core}>
+      <RunsContext.Provider value={runs}>{children}</RunsContext.Provider>
+    </SessionContext.Provider>
+  );
 }
 
-export function useSession(): SessionValue {
+/** Tabs, view state and actions; doesn't re-render when responses or burst results arrive. */
+export function useSessionCore(): SessionCore {
   const ctx = useContext(SessionContext);
-  if (!ctx) throw new Error("useSession must be used inside <SessionProvider>");
+  if (!ctx) throw new Error("useSessionCore must be used inside <SessionProvider>");
   return ctx;
+}
+
+/** Responses, in-flight sends and burst runs (changes often while requests run). */
+export function useSessionRuns(): SessionRuns {
+  const ctx = useContext(RunsContext);
+  if (!ctx) throw new Error("useSessionRuns must be used inside <SessionProvider>");
+  return ctx;
+}
+
+/** Everything: prefer useSessionCore where responses and bursts aren't needed. */
+export function useSession(): SessionValue {
+  const core = useSessionCore();
+  const runs = useSessionRuns();
+  return useMemo(() => ({ ...core, ...runs }), [core, runs]);
 }

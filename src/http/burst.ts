@@ -1,6 +1,7 @@
 import type { KeyValue, SatchelRequest } from "@/types";
 import { buildUrl } from "@/requestBuilder";
 import { buildInit, doFetch } from "./send";
+import { errorMessage } from "@/lib/errors";
 
 export interface BurstConfig {
   /** requests per second, 1–200 */
@@ -99,7 +100,7 @@ export function startBurst(
       onResult({
         seq, t, status: null, ok: false, ms: Math.round(performance.now() - sentAt),
         remaining: null, limit: null, retryAfter: null, rateLimitHeaders: [],
-        error: err instanceof Error ? err.message : "Request failed",
+        error: errorMessage(err, "Request failed"),
       });
     }
   };

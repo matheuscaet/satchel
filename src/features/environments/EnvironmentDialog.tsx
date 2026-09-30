@@ -3,7 +3,7 @@ import { toast } from "sonner";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Checkmark } from "@/components/common/Checkmark";
 import { ENV_SWATCHES, useWorkspace } from "@/state/workspace";
-import { useSession } from "@/state/session";
+import { useSessionCore } from "@/state/session";
 import { useUi, type EnvironmentDialogState } from "@/state/ui";
 import type { Environment } from "@/types";
 import { cn } from "@/lib/utils";
@@ -35,7 +35,7 @@ export function EnvironmentDialog() {
 
 function EnvironmentForm({ state, onClose }: { state: EnvironmentDialogState; onClose: () => void }) {
   const ws = useWorkspace();
-  const session = useSession();
+  const session = useSessionCore();
   const environments = ws.workspace.environments;
   const creating = state.mode === "create";
   const renaming = state.mode === "rename" ? environments.find((e) => e.id === state.environmentId) : undefined;
@@ -166,10 +166,11 @@ function EnvironmentForm({ state, onClose }: { state: EnvironmentDialogState; on
 function SourcePreview({ source }: { source: Environment | undefined }) {
   if (!source) return <>Starts empty. Anything it doesn't define falls back to the collection, then globals.</>;
   const keys = source.variables.map((v) => v.key);
+  const anySecret = source.variables.some((v) => v.secret);
   return (
     <>
       Copies {keys.length} variable{keys.length === 1 ? "" : "s"} from {source.name}:{" "}
-      <span className="font-mono">{keys.join(", ") || "none"}</span>.
+      <span className="font-mono">{keys.join(", ") || "none"}</span>.{anySecret && " Secret values are copied only on this machine."}
     </>
   );
 }

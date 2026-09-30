@@ -14,6 +14,21 @@ export function resultKind(r: BurstResult): ResultKind {
   return "other";
 }
 
+/**
+ * `incoming` merged into `sorted` (ascending by seq) as a new array. Results
+ * arrive nearly in order, so a batch usually just appends; only the tail that
+ * overlaps the batch is re-sorted.
+ */
+export function mergeBySeq(sorted: BurstResult[], incoming: BurstResult[]): BurstResult[] {
+  if (!incoming.length) return sorted;
+  const batch = incoming.length > 1 ? [...incoming].sort((a, b) => a.seq - b.seq) : incoming;
+  let i = sorted.length;
+  while (i > 0 && sorted[i - 1].seq > batch[0].seq) i--;
+  if (i === sorted.length) return sorted.concat(batch);
+  const tail = sorted.slice(i).concat(batch).sort((a, b) => a.seq - b.seq);
+  return sorted.slice(0, i).concat(tail);
+}
+
 /** Nearest-rank percentile of an ascending-sorted list; null when empty. */
 export function percentile(sorted: number[], p: number): number | null {
   if (!sorted.length) return null;
@@ -91,6 +106,13 @@ export function latencyTop(results: BurstResult[]): number {
 
 export const CHART = { height: 150, left: 50, right: 34, top: 12, bottom: 22, minWidth: 280 } as const;
 
+/**
+ * Past this many results the bars are pooled into 1px columns (a 200 req/s ×
+ * 60 s run would otherwise mount 12k <rect>s). Bars that thin overlap anyway:
+ * each column keeps its tallest bar per kind, which is the shape they drew.
+ */
+export const BAR_LIMIT = 2000;
+
 export interface ChartBar {
   seq: number;
   x: number;
@@ -144,17 +166,41 @@ export function chartGeometry(results: BurstResult[], seconds: number, total: nu
     label: `${Math.round(topMs * f)}${f === 1 ? " ms" : ""}`,
   }));
 
-  const bars: ChartBar[] = results.map((r) => {
+  const bar = (r: BurstResult): ChartBar => {
     const by = y(r.ms);
     return { seq: r.seq, x: round(x(r.t) - bw / 2), y: round(by), w: round(bw), h: round(bottom - by), kind: resultKind(r) };
-  });
+  };
+  let bars: ChartBar[];
+  if (results.length <= BAR_LIMIT) bars = results.map(bar);
+  else {
+    // Tallest result per (column, kind), in the order the columns first appear.
+    const tallest = new Map<string, BurstResult>();
+    for (const r of results) {
+      const key = `${Math.floor(x(r.t) - left)}:${resultKind(r)}`;
+      const seen = tallest.get(key);
+      if (!seen || r.ms > seen.ms) tallest.set(key, r);
+    }
+    bars = [...tallest.values()].map(bar);
+  }
 
   let remaining: ChartGeometry["remaining"] = null;
   const scale = remainingScale(results);
   if (scale !== null) {
     const ry = (rem: number) => bottom - (Math.min(Math.max(rem, 0), scale) / scale) * ph;
     let d = `M${round(x(0))},${round(ry(scale))}`;
-    for (const r of results) if (r.remaining !== null) d += ` H${round(x(r.t))} V${round(ry(r.remaining))}`;
+    // A run of equal values is one horizontal stretch: draw it once, up to its last point.
+    let level = scale;
+    let flatTo: number | null = null;
+    for (const r of results) {
+      if (r.remaining === null) continue;
+      if (r.remaining === level) flatTo = x(r.t);
+      else {
+        d += ` H${round(x(r.t))} V${round(ry(r.remaining))}`;
+        level = r.remaining;
+        flatTo = null;
+      }
+    }
+    if (flatTo !== null) d += ` H${round(flatTo)}`;
     remaining = { path: d, scale };
   }
 

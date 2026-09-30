@@ -4,6 +4,9 @@ import {
   DropdownMenuItem,
   DropdownMenuLabel,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Kbd } from "@/components/common/Kbd";
 import { cn } from "@/lib/utils";
@@ -54,4 +57,24 @@ export function MenuHead({ className, ...props }: ComponentProps<typeof Dropdown
 
 export function MenuSeparator({ className, ...props }: ComponentProps<typeof DropdownMenuSeparator>) {
   return <DropdownMenuSeparator className={cn("mx-0.5 my-1 bg-line", className)} {...props} />;
+}
+
+export const MenuSub = DropdownMenuSub;
+
+export function MenuSubTrigger({ className, ...props }: ComponentProps<typeof DropdownMenuSubTrigger>) {
+  return (
+    <DropdownMenuSubTrigger
+      className={cn(
+        "h-7 gap-2 rounded-[5px] px-2 py-0 text-[13px] whitespace-nowrap text-fg2 focus:bg-bg3 focus:text-fg data-[state=open]:bg-bg3 data-[state=open]:text-fg [&_svg]:size-3.5 [&_svg:not([class*='text-'])]:text-current",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
+export function MenuSubContent({ className, ...props }: ComponentProps<typeof DropdownMenuSubContent>) {
+  return (
+    <DropdownMenuSubContent className={cn("min-w-[220px] rounded-lg border-0 bg-bg1 p-1 text-[13px] text-fg shadow-pop", className)} {...props} />
+  );
 }

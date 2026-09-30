@@ -12,9 +12,7 @@ export interface HttpResponse {
   timeMs: number;
   sizeBytes: number;
   headers: [string, string][];
-  /** Body for display: pretty-printed when it's JSON */
-  bodyText: string;
-  /** Body exactly as received */
+  /** Body exactly as received. The viewer indents JSON itself (and caches it), so no second copy is kept here. */
   rawBodyText: string;
   isJson: boolean;
 }
@@ -64,7 +62,8 @@ export async function sendRequest(request: SatchelRequest, variables: KeyValue[]
   const init = await buildInit(request, variables, signal);
   const started = performance.now();
   const res = await doFetch()(url, init);
-  const text = await res.text();
+  const bytes = await res.arrayBuffer();
+  const text = new TextDecoder().decode(bytes);
   const contentType = res.headers.get("content-type") ?? "";
   const isJson = contentType.includes("json");
   return {
@@ -72,20 +71,11 @@ export async function sendRequest(request: SatchelRequest, variables: KeyValue[]
     statusText: statusText(res.status, res.statusText),
     ok: res.ok,
     timeMs: Math.round(performance.now() - started),
-    sizeBytes: new Blob([text]).size,
+    sizeBytes: bytes.byteLength,
     headers: Array.from(res.headers.entries()),
-    bodyText: isJson ? prettyJson(text) : text,
     rawBodyText: text,
     isJson,
   };
-}
-
-function prettyJson(text: string): string {
-  try {
-    return JSON.stringify(JSON.parse(text), null, 2);
-  } catch {
-    return text;
-  }
 }
 
 export { doFetch };
