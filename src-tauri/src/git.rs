@@ -41,7 +41,14 @@ fn run(cwd: &str, args: &[&str], timeout: Duration) -> Result<GitOutput, String>
     if !Path::new(cwd).is_dir() {
         return Err(format!("{cwd} isn't a folder"));
     }
-    let mut child = Command::new("git")
+    let mut command = Command::new("git");
+    // CREATE_NO_WINDOW: the release app has no console, so Windows would open one for each git run.
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        command.creation_flags(0x0800_0000);
+    }
+    let mut child = command
         .args(args)
         .current_dir(cwd)
         // Never wait for a password prompt nobody can see; fail with git's message instead.

@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { Check } from "lucide-react";
+import type { Environment } from "@/types";
 import { useWorkspace } from "@/state/workspace";
 import { useSessionCore } from "@/state/session";
 import { resolveVariable, mergedVariables, type VariableContext } from "@/variables";
@@ -50,6 +51,9 @@ export function VariableHoverLayer({ rootRef, requestId, onEditPathParam }: Vari
     if (timer.current) clearTimeout(timer.current);
     forEl.current = null;
     setVisible(false);
+    // A field left focused in the hidden card would keep it pinned (see onMove).
+    const active = document.activeElement;
+    if (active instanceof HTMLElement && popRef.current?.contains(active)) active.blur();
   }, []);
 
   useEffect(() => {
@@ -58,6 +62,8 @@ export function VariableHoverLayer({ rootRef, requestId, onEditPathParam }: Vari
       timer.current = null;
     };
     const onMove = (e: MouseEvent) => {
+      // Editing a value in the card pins it: the pointer drifting off (or over another token) doesn't swap or close it.
+      if (popRef.current?.contains(document.activeElement)) return;
       const root = rootRef.current;
       const target = e.target instanceof HTMLElement ? e.target : null;
       if (!root || !target) return;
@@ -127,7 +133,8 @@ export function VariableHoverLayer({ rootRef, requestId, onEditPathParam }: Vari
   return createPortal(
     <div
       ref={popRef}
-      role="tooltip"
+      role="dialog"
+      aria-label={open.target.kind === "path" ? `Path parameter ${open.target.name}` : `Variable ${open.target.name}`}
       className={cn(
         "fixed z-[90] w-[320px] rounded-lg bg-bg1 px-3 py-2.5 text-xs text-fg shadow-pop transition-[opacity,transform] duration-150 ease-out",
         visible ? "pointer-events-auto opacity-100" : "pointer-events-none -translate-y-0.5 opacity-0",
@@ -246,6 +253,7 @@ function VariableCard({ requestId, name, onDone }: { requestId: string; name: st
             );
           })}
         </div>
+        {env && <EnvValueEditor env={env} name={name} secret={secret} />}
         <Footer>
           <span>env → collection → globals</span>
           <LinkButton
@@ -277,6 +285,7 @@ function VariableCard({ requestId, name, onDone }: { requestId: string; name: st
       <div className="mb-2 text-xs leading-normal text-fg3">
         {definedIn.length ? `Defined in ${definedIn.join(", ")}.` : "Not defined anywhere."} As things stand, it would be sent literally.
       </div>
+      {env && <EnvValueEditor env={env} name={name} secret={secret} />}
       <Footer>
         <span />
         <LinkButton
@@ -285,10 +294,82 @@ function VariableCard({ requestId, name, onDone }: { requestId: string; name: st
             session.openEnvironments({ variable: name, environmentId: env?.id });
           }}
         >
-          {env ? `Define in ${env.name}` : "Define it"}
+          {env ? "Open environments" : "Define it"}
         </LinkButton>
       </Footer>
     </>
+  );
+}
+
+/**
+ * The variable's value in the active environment, editable in place. It only takes focus
+ * on a click: the card opens while people type in the URL, and must not steal keystrokes.
+ */
+function EnvValueEditor({ env, name, secret }: { env: Environment; name: string; secret: boolean }) {
+  const ws = useWorkspace();
+  const current = findVariable(name, env.variables)?.value;
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+  // A secret isn't shown to be edited: an untouched field means "keep the stored value".
+  const keepsSecret = secret && current !== undefined && current !== "";
+
+  const start = () => {
+    setDraft(keepsSecret ? "" : (current ?? ""));
+    setEditing(true);
+  };
+  const save = (e: FormEvent) => {
+    e.preventDefault();
+    if (!(keepsSecret && draft === "")) ws.setVariableIn({ scope: "environment", id: env.id }, name, draft);
+    setEditing(false);
+  };
+
+  if (!editing) {
+    return (
+      <div className="mb-2 flex items-center justify-between gap-2 rounded-[5px] border border-line px-2 py-1.5">
+        <span className="min-w-0 truncate text-fg3">
+          In {env.name}:{" "}
+          {current === undefined ? (
+            "not set"
+          ) : (
+            <span className="font-mono text-fg2">{displayValue(current, secret, false) || "empty"}</span>
+          )}
+        </span>
+        <button type="button" onClick={start} className="flex-none text-brass hover:underline">
+          {current === undefined ? `Set in ${env.name}` : "Change"}
+        </button>
+      </div>
+    );
+  }
+  return (
+    <form onSubmit={save} className="mb-2 grid gap-1.5">
+      <label className="text-fg3" htmlFor="variable-hover-value">
+        Value in {env.name}
+      </label>
+      <div className="flex gap-1.5">
+        <input
+          id="variable-hover-value"
+          autoFocus
+          type={secret ? "password" : "text"}
+          value={draft}
+          spellCheck={false}
+          autoComplete="off"
+          placeholder={keepsSecret ? "Type a new value (blank keeps it)" : "Value"}
+          onChange={(e) => setDraft(e.target.value)}
+          onFocus={(e) => e.currentTarget.select()}
+          onKeyDown={(e) => {
+            if (e.key !== "Escape") return;
+            // First Escape cancels the edit; the next one closes the card.
+            e.preventDefault();
+            e.stopPropagation();
+            setEditing(false);
+          }}
+          className="h-7 min-w-0 flex-1 rounded-[5px] border border-line2 bg-bg0 px-2 font-mono text-[12.5px] text-fg outline-none placeholder:font-sans placeholder:text-fg3 focus:border-brass-line"
+        />
+        <button type="submit" className="h-7 flex-none rounded-[5px] bg-brass px-2.5 font-medium text-brass-ink hover:brightness-110">
+          Save
+        </button>
+      </div>
+    </form>
   );
 }
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { open as openDialog } from "@tauri-apps/plugin-dialog";
-import { exists, watch } from "@tauri-apps/plugin-fs";
+import { exists, watchImmediate } from "@tauri-apps/plugin-fs";
 import { toast } from "sonner";
 import type { Workspace } from "@/types";
 import { emptyWorkspace, parseWorkspace } from "@/workspace";
@@ -362,7 +362,10 @@ export function usePersistence(workspace: Workspace, setWorkspace: (w: Workspace
     let timer: ReturnType<typeof setTimeout> | null = null;
     /** relevant paths reported since the last check */
     let changed = new Set<string>();
-    watch(
+    // Raw events, coalesced by the timer below. The plugin's debounced `watch` keeps a file-id cache
+    // that, on Windows and macOS, walks the whole folder (.git included) on the main thread when it
+    // starts: the window froze for as long as that took, on every launch.
+    watchImmediate(
       root,
       (event) => {
         // Opening and reading files (our own reloads, git status) changes nothing.
@@ -385,7 +388,7 @@ export function usePersistence(workspace: Workspace, setWorkspace: (w: Workspace
           })();
         }, RELOAD_DELAY);
       },
-      { recursive: true, delayMs: 200 },
+      { recursive: true },
     )
       .then((unwatch) => {
         if (cancelled) unwatch();

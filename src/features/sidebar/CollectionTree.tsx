@@ -13,6 +13,7 @@ import { TreeRow, type MenuOpening, type RowAction, type RowHandlers } from "./T
 import { ancestorIds, containerIds, keepUnchangedRows, visibleRows, type TreeRowModel } from "./treeRows";
 import { ROW_INDENT, ROW_PAD, type DragSource, type Drop, type DropIndicator } from "./dropTarget";
 import { ROW_H, revealScrollTop, rowWindow, visibleSpan, type VisibleSpan } from "./treeWindow";
+import { closedToStore, loadClosed, saveClosed, treeStateKey } from "./treeState";
 import { useTreeDrag } from "./useTreeDrag";
 
 interface CollectionTreeProps {
@@ -39,7 +40,17 @@ export function CollectionTree({ filter, renamingId, setRenamingId, onDelete, co
   const copyAsCurl = useCopyAsCurl();
   const collections = ws.workspace.collections;
 
-  const [closed, setClosed] = useState<ReadonlySet<string>>(() => new Set());
+  // Closed collections and folders, remembered per workspace (and reloaded when another one opens).
+  const treeKey = treeStateKey(ws.source);
+  const [closed, setClosed] = useState<ReadonlySet<string>>(() => loadClosed(treeKey));
+  const [closedFor, setClosedFor] = useState(treeKey);
+  const loadedClosed = useRef(closed);
+  if (closedFor !== treeKey) {
+    const next = loadClosed(treeKey);
+    loadedClosed.current = next;
+    setClosedFor(treeKey);
+    setClosed(next);
+  }
   const [menu, setMenu] = useState<{ id: string; via: MenuOpening } | null>(null);
   const [reorderHint, setReorderHint] = useState(false);
   const [focusedId, setFocusedId] = useState<string | null>(null);
@@ -184,6 +195,13 @@ export function CollectionTree({ filter, renamingId, setRenamingId, onDelete, co
     focusAfterRender.current = null;
     focusRow(id);
   });
+
+  // Saved when the user opens or closes something, not when a stored state is loaded.
+  useEffect(() => {
+    if (closed === loadedClosed.current || closedFor !== treeKey) return;
+    saveClosed(treeKey, closedToStore(closed, containerIds(collections)));
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- on changes to `closed` only
+  }, [closed]);
 
   // "Collapse all": every collection and folder closes (the open request stays open in its tab).
   useEffect(() => {

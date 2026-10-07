@@ -1,6 +1,6 @@
 [package]
 name = "satchel"
-version = "1.0.1"
+version = "1.0.2"
 description = "Satchel — an open-source desktop API client with Postman collection import"
 authors = ["Satchel contributors"]
 edition = "2021"
@@ -20,10 +20,10 @@ tauri-build = { version = "2", features = [] }
 [dependencies]
 tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
-tauri-plugin-http = "=2.6.1"
+tauri-plugin-http = "=2.7.0"
 tauri-plugin-dialog = "=2.7.3"
-tauri-plugin-fs = { version = "=2.5.2", features = ["watch"] }
-tauri-plugin-clipboard-manager = "=2.3.3"
+tauri-plugin-fs = { version = "=2.6.0", features = ["watch"] }
+tauri-plugin-clipboard-manager = "=2.4.1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 keyring = "4.2.0"
