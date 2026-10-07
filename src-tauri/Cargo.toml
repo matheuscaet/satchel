@@ -1,6 +1,6 @@
 [package]
 name = "satchel"
-version = "1.0.1"
+version = "1.0.2"
 description = "Satchel — an open-source desktop API client with Postman collection import"
 authors = ["Satchel contributors"]
 edition = "2021"
