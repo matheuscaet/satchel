@@ -3725,7 +3725,7 @@ dependencies = [
 
 [[package]]
 name = "satchel"
-version = "1.0.2"
+version = "1.0.3"
 dependencies = [
  "keyring",
  "serde",
