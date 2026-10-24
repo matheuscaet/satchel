@@ -110,6 +110,21 @@ src-tauri/                 Rust shell (Tauri config, plugin wiring)
 
 Early but functional. Working: creating and editing collections/folders/requests, Postman import, curl paste, environments + globals, sending requests (including form data and QUERY), viewing and searching the response, rate-limit bursts, save/open to a workspace file. Not yet built: request history, native GraphQL bodies, pre/post-request scripts.
 
+## Releasing
+
+Releases are automatic. When a PR is merged into `master`, `.github/workflows/auto-release.yml` reads the [Conventional Commits](https://www.conventionalcommits.org/) since the last tag and picks the bump:
+
+| Commits | Bump |
+| --- | --- |
+| `feat!:`, `fix!:` or a `BREAKING CHANGE:` footer | major |
+| `feat:` | minor |
+| `fix:`, `perf:`, `refactor:`, anything else | patch |
+| only `docs:`, `ci:`, `test:`, `style:`, `chore:`, `build:` | no release |
+
+A PR label `release:major`, `release:minor`, `release:patch` or `release:skip` overrides that. The workflow writes the new version into `package.json`, `package-lock.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock` and `src-tauri/tauri.conf.json`, commits it to `master` as `chore(release): vX.Y.Z` and pushes the `vX.Y.Z` tag. It needs a `RELEASE_TOKEN` repository secret: a fine-grained personal access token with Contents read & write on this repo, from an account allowed to push past `master`'s branch protection.
+
+The tag triggers `.github/workflows/release.yml`, which builds installers for macOS (universal binary), Windows, and Linux, attaches them to a GitHub release with notes generated from the merged PRs, and publishes it once every platform has uploaded. To rebuild an existing tag, run it manually from the Actions tab. Builds are unsigned, so first launches will trip Gatekeeper (macOS) or SmartScreen (Windows) warnings until code signing is set up separately.
+
 ## Contributing
 
 See [CONTRIBUTING.md](CONTRIBUTING.md). Security issues: see [SECURITY.md](SECURITY.md) — please don't file those as public issues.

@@ -1,0 +1,81 @@
+name: Auto release
+
+# When a PR is merged into master, works out the next version from the
+# Conventional Commits since the last tag (feat -> minor, fix/perf/refactor ->
+# patch, `!` or BREAKING CHANGE -> major; docs/ci/test/style/chore/build alone
+# don't release), writes it into package.json, package-lock.json, Cargo.toml,
+# Cargo.lock and tauri.conf.json, commits that to master and pushes a vX.Y.Z tag.
+# The tag starts release.yml, which builds the installers and publishes the
+# release.
+#
+# A PR label overrides the analysis: release:major, release:minor,
+# release:patch, or release:skip.
+#
+# master is protected, so the push needs RELEASE_TOKEN: a token for an account
+# allowed to bypass branch protection (a fine-grained PAT with Contents:
+# read & write on this repo). Pushes made with the default GITHUB_TOKEN would
+# also not start release.yml.
+on:
+  pull_request_target:
+    types: [closed]
+    branches: [master]
+
+permissions:
+  contents: write
+
+# One release at a time, in merge order.
+concurrency:
+  group: auto-release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: master
+          fetch-depth: 0
+          token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Set up Node
+        uses: actions/setup-node@v7
+        with:
+          node-version: 20
+
+      - name: Analyze changes
+        id: analyze
+        env:
+          LABELS: ${{ join(github.event.pull_request.labels.*.name, ',') }}
+        run: |
+          node scripts/release.mjs analyze --labels "$LABELS" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Bump version, commit and tag
+        if: steps.analyze.outputs.bump != 'none'
+        env:
+          VERSION: ${{ steps.analyze.outputs.next }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "::error::Tag v$VERSION already exists"
+            exit 1
+          fi
+          node scripts/release.mjs bump "$VERSION"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -am "chore(release): v$VERSION" -m "Released after #$PR_NUMBER."
+          git tag -a "v$VERSION" -m "v$VERSION"
+          git push origin HEAD:master "v$VERSION"
+
+      - name: Summary
+        env:
+          BUMP: ${{ steps.analyze.outputs.bump }}
+          CURRENT: ${{ steps.analyze.outputs.current }}
+          NEXT: ${{ steps.analyze.outputs.next }}
+        run: |
+          if [ "$BUMP" = none ]; then
+            echo "No release: nothing user-facing since v$CURRENT." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Released **v$NEXT** ($BUMP bump from v$CURRENT)." >> "$GITHUB_STEP_SUMMARY"
+          fi
