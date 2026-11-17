@@ -1,7 +1,8 @@
-import { memo, useMemo, type ReactNode } from "react";
+import { Fragment, memo, useCallback, useMemo, useState, type ReactNode } from "react";
 import type { BurstRun } from "@/state/session";
 import type { BurstResult } from "@/http/burst";
 import { cn } from "@/lib/utils";
+import { HeadersTable } from "@/features/response/HeadersTable";
 import { BurstChart } from "./BurstChart";
 import { summarizeBurst, type BurstSummary } from "./burstMath";
 
@@ -75,6 +76,9 @@ function statusClass(status: number | null): string {
 function BurstLog({ results, firstSeq }: { results: BurstResult[]; firstSeq: number | null }) {
   const rows = useMemo(() => results.slice(-LOG_LIMIT).reverse(), [results]);
   const hidden = results.length - rows.length;
+  // One response's headers open at a time; it stays open while new results push it down the log.
+  const [openSeq, setOpenSeq] = useState<number | null>(null);
+  const toggle = useCallback((seq: number) => setOpenSeq((s) => (s === seq ? null : seq)), []);
   return (
     <table className="w-full border-collapse font-mono text-xs text-fg2">
       <thead>
@@ -88,7 +92,20 @@ function BurstLog({ results, firstSeq }: { results: BurstResult[]; firstSeq: num
       </thead>
       <tbody>
         {rows.map((r) => (
-          <LogRow key={r.seq} result={r} first={r.seq === firstSeq} />
+          <Fragment key={r.seq}>
+            <LogRow result={r} first={r.seq === firstSeq} open={r.seq === openSeq} onToggle={toggle} />
+            {r.seq === openSeq && (
+              <tr>
+                <td colSpan={6} className="border-b border-line bg-bg1 p-0">
+                  {r.headers.length ? (
+                    <HeadersTable headers={r.headers} />
+                  ) : (
+                    <div className="px-3 py-2 font-sans text-fg3">The response has no headers.</div>
+                  )}
+                </td>
+              </tr>
+            )}
+          </Fragment>
         ))}
         {hidden > 0 && (
           <tr>
@@ -102,12 +119,44 @@ function BurstLog({ results, firstSeq }: { results: BurstResult[]; firstSeq: num
   );
 }
 
-// Results never change once reported, so rows re-render only when they're new (the log updates while a run reports).
-const LogRow = memo(function LogRow({ result: r, first }: { result: BurstResult; first: boolean }) {
+interface LogRowProps {
+  result: BurstResult;
+  first: boolean;
+  open: boolean;
+  onToggle: (seq: number) => void;
+}
+
+// Results never change once reported, so rows re-render only when they're new or open/close (the log updates while a run reports).
+const LogRow = memo(function LogRow({ result: r, first, open, onToggle }: LogRowProps) {
   const td = cn(TD, first && "bg-err-soft");
+  // A failed request has no response, so nothing to expand.
+  const expandable = r.status !== null;
   return (
-    <tr>
-      <td className={td}>{r.seq}</td>
+    <tr
+      onClick={expandable ? () => onToggle(r.seq) : undefined}
+      className={cn(expandable && "cursor-pointer hover:bg-bg2", open && "bg-bg2")}
+    >
+      <td className={td}>
+        {expandable ? (
+          <button
+            type="button"
+            aria-expanded={open}
+            aria-label={`${open ? "Hide" : "Show"} response headers for request ${r.seq}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggle(r.seq);
+            }}
+            className="inline-flex items-center gap-1 text-left"
+          >
+            <span aria-hidden className={cn("inline-block w-2 text-fg3 transition-transform", open && "rotate-90")}>
+              ›
+            </span>
+            {r.seq}
+          </button>
+        ) : (
+          <span className="pl-3">{r.seq}</span>
+        )}
+      </td>
       <td className={td}>{r.t.toFixed(2)}s</td>
       <td className={cn(td, statusClass(r.status))}>{r.status ?? "ERR"}</td>
       <td className={td}>{r.ms} ms</td>

@@ -24,6 +24,7 @@ function res(seq: number, over: Partial<BurstResult> = {}): BurstResult {
     limit: null,
     retryAfter: null,
     rateLimitHeaders: [],
+    headers: [],
     ...over,
   };
 }

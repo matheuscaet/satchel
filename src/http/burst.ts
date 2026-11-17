@@ -25,6 +25,8 @@ export interface BurstResult {
   /** Retry-After, as sent */
   retryAfter: string | null;
   rateLimitHeaders: [string, string][];
+  /** Every response header, as received; empty when the request failed. */
+  headers: [string, string][];
   error?: string;
 }
 
@@ -82,6 +84,7 @@ export function startBurst(
         // stream cancellation unsupported — harmless
       }
       if (!running && controller.signal.aborted) return;
+      const headers = Array.from(res.headers.entries());
       const result: BurstResult = {
         seq,
         t,
@@ -91,7 +94,8 @@ export function startBurst(
         remaining: headerNumber(res.headers, "remaining"),
         limit: headerNumber(res.headers, "limit"),
         retryAfter: res.headers.get("retry-after"),
-        rateLimitHeaders: Array.from(res.headers.entries()).filter(([k]) => RATE_HEADER_RE.test(k)),
+        rateLimitHeaders: headers.filter(([k]) => RATE_HEADER_RE.test(k)),
+        headers,
       };
       onResult(result);
       if (config.stopAtFirst429 && res.status === 429) stop();
@@ -99,7 +103,7 @@ export function startBurst(
       if (controller.signal.aborted) return;
       onResult({
         seq, t, status: null, ok: false, ms: Math.round(performance.now() - sentAt),
-        remaining: null, limit: null, retryAfter: null, rateLimitHeaders: [],
+        remaining: null, limit: null, retryAfter: null, rateLimitHeaders: [], headers: [],
         error: errorMessage(err, "Request failed"),
       });
     }
